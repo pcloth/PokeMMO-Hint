@@ -1,4 +1,5 @@
 use super::*;
+use pokemmo_hint::regions::{bubble_tail, BubbleTail};
 
 pub(super) fn bounds(r: Rect) -> Bounds {
     Bounds {
@@ -44,6 +45,7 @@ pub(super) unsafe fn screen_for(r: Bounds) -> Bounds {
 struct Content {
     card: HintCard,
     label: String,
+    tail: Option<BubbleTail>,
 }
 struct Context {
     theme: Rc<paint::Theme>,
@@ -69,6 +71,7 @@ impl Window {
             content: RefCell::new(Content {
                 card: card.clone(),
                 label: pokemmo_hint::regions::first_weakness(card),
+                tail: None,
             }),
         });
         let hwnd = CreateWindowExW(
@@ -115,14 +118,41 @@ impl Window {
                 ),
             )
         } else {
-            paint::label_size(
+            let (width, height) = paint::label_size(
                 &self.context.theme,
                 self.context.dpi,
                 &self.context.content.borrow().label,
-            )
+            );
+            let padding = paint::px(10, self.context.dpi);
+            (width + padding * 2, height + padding * 2)
         }
     }
-    pub(super) unsafe fn show_at(&self, r: Bounds) {
+    pub(super) unsafe fn show_at(&self, r: Bounds, target: Bounds) {
+        let dpi = self.context.dpi;
+        let padding = paint::px(10, dpi);
+        let body = Bounds {
+            x: padding,
+            y: padding,
+            width: r.width - padding * 2,
+            height: r.height - padding * 2,
+        };
+        let tail = bubble_tail(
+            r,
+            body,
+            target,
+            paint::px(8, dpi),
+            paint::px(7, dpi),
+            paint::px(10, dpi),
+        );
+        let changed = {
+            let mut content = self.context.content.borrow_mut();
+            let changed = content.tail != Some(tail);
+            content.tail = Some(tail);
+            changed
+        };
+        if changed {
+            InvalidateRect(self.hwnd, null(), 0);
+        }
         if self.visible_bounds() != Some(r) {
             SetWindowPos(self.hwnd, -1, r.x, r.y, r.width, r.height, 0x50);
         }
@@ -172,17 +202,19 @@ pub(super) unsafe extern "system" fn window_proc(
         FillRect(dc, &area, brush);
         DeleteObject(brush);
         if let Ok(content) = ctx.content.try_borrow() {
-            if ctx.full {
-                paint::draw_card(
-                    dc,
-                    &ctx.theme,
-                    ctx.dpi,
-                    &content.card,
-                    paint::px(10, ctx.dpi),
-                    paint::px(10, ctx.dpi),
-                );
-            } else {
-                paint::draw_tag(dc, &ctx.theme, ctx.dpi, &content.label, area);
+            if let Some(tail) = content.tail {
+                let padding = paint::px(10, ctx.dpi);
+                let body = Rect {
+                    left: padding,
+                    top: padding,
+                    right: area.right - padding,
+                    bottom: area.bottom - padding,
+                };
+                if ctx.full {
+                    paint::draw_bubble_card(dc, &ctx.theme, ctx.dpi, &content.card, body, tail);
+                } else {
+                    paint::draw_tag(dc, &ctx.theme, ctx.dpi, &content.label, body, tail);
+                }
             }
         }
     }

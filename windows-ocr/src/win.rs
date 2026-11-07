@@ -224,6 +224,18 @@ extern "system" {
     fn SetTextColor(dc: Handle, color: u32) -> u32;
     fn SetBkColor(dc: Handle, color: u32) -> u32;
     fn CreateSolidBrush(color: u32) -> Handle;
+    fn CreateRoundRectRgn(
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+        width: i32,
+        height: i32,
+    ) -> Handle;
+    fn CreatePolygonRgn(points: *const Point, count: i32, mode: i32) -> Handle;
+    fn CombineRgn(destination: Handle, first: Handle, second: Handle, mode: i32) -> i32;
+    fn FillRgn(dc: Handle, region: Handle, brush: Handle) -> i32;
+    fn FrameRgn(dc: Handle, region: Handle, brush: Handle, width: i32, height: i32) -> i32;
     fn RoundRect(dc: Handle, left: i32, top: i32, right: i32, bottom: i32, w: i32, h: i32) -> i32;
     fn CreateFontW(
         height: i32,
@@ -579,7 +591,7 @@ impl App {
                             tag.hide();
                             continue;
                         }
-                        tag.show_at(position);
+                        tag.show_at(position, region);
                         visible.push((index, card, region, position));
                     }
                 } else if let Some(tag) = &slot.tag {
@@ -622,7 +634,7 @@ impl App {
                         overlay::screen_for(*region),
                         &avoid,
                     );
-                    details.show_at(position);
+                    details.show_at(position, *region);
                 }
             } else {
                 self.hovered = None;

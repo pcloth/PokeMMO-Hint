@@ -226,6 +226,88 @@ impl Bounds {
         }
     }
 }
+/// Triangle vertices in popup-local coordinates. The base overlaps the body so
+/// the renderer can union both shapes without an internal border seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BubbleSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BubbleTail {
+    pub side: BubbleSide,
+    pub points: [(i32, i32); 3],
+}
+pub fn bubble_tail(
+    window: Bounds,
+    body: Bounds,
+    target: Bounds,
+    depth: i32,
+    half: i32,
+    corner: i32,
+) -> BubbleTail {
+    let target_x = target.x + target.width / 2 - window.x;
+    let target_y = target.y + target.height / 2 - window.y;
+    let side = if window.y + window.height <= target.y {
+        BubbleSide::Bottom
+    } else if target.y + target.height <= window.y {
+        BubbleSide::Top
+    } else if window.x + window.width <= target.x {
+        BubbleSide::Right
+    } else if target.x + target.width <= window.x {
+        BubbleSide::Left
+    } else {
+        let dx = target_x - (body.x + body.width / 2);
+        let dy = target_y - (body.y + body.height / 2);
+        if i64::from(dx).abs() * i64::from(body.height)
+            > i64::from(dy).abs() * i64::from(body.width)
+        {
+            if dx < 0 {
+                BubbleSide::Left
+            } else {
+                BubbleSide::Right
+            }
+        } else if dy < 0 {
+            BubbleSide::Top
+        } else {
+            BubbleSide::Bottom
+        }
+    };
+    let horizontal = matches!(side, BubbleSide::Top | BubbleSide::Bottom);
+    let (start, length, target) = if horizontal {
+        (body.x, body.width, target_x)
+    } else {
+        (body.y, body.height, target_y)
+    };
+    let half = half.max(0).min(length / 2);
+    let margin = (corner.max(0) + half).min(length / 2);
+    let center = target.clamp(start + margin, start + length - margin);
+    let points = match side {
+        BubbleSide::Top => [
+            (center - half, body.y + 1),
+            (center, body.y - depth),
+            (center + half, body.y + 1),
+        ],
+        BubbleSide::Bottom => [
+            (center - half, body.y + body.height - 2),
+            (center, body.y + body.height + depth - 1),
+            (center + half, body.y + body.height - 2),
+        ],
+        BubbleSide::Left => [
+            (body.x + 1, center - half),
+            (body.x - depth, center),
+            (body.x + 1, center + half),
+        ],
+        BubbleSide::Right => [
+            (body.x + body.width - 2, center - half),
+            (body.x + body.width + depth - 1, center),
+            (body.x + body.width - 2, center + half),
+        ],
+    };
+    BubbleTail { side, points }
+}
 pub fn tag_position(region: Bounds, size: (i32, i32), screen: Bounds) -> Bounds {
     let (width, height) = size;
     let above = Bounds {
@@ -440,6 +522,54 @@ mod tests {
         let details = detail_position(region, (600, 280), screen, &[region]);
         assert!(!details.overlaps(region));
         assert!(details.x >= screen.x && details.x + details.width <= screen.x + screen.width);
+    }
+    #[test]
+    fn bubble_tails_follow_the_target_and_stay_inside_popup_padding() {
+        for scale in [1, 2, 3] {
+            let window = Bounds {
+                x: -1200,
+                y: 200,
+                width: 100 * scale,
+                height: 50 * scale,
+            };
+            let body = Bounds {
+                x: 10 * scale,
+                y: 10 * scale,
+                width: 80 * scale,
+                height: 30 * scale,
+            };
+            for (dx, dy, side) in [
+                (0, -100, BubbleSide::Top),
+                (0, 100, BubbleSide::Bottom),
+                (-100, 0, BubbleSide::Left),
+                (100, 0, BubbleSide::Right),
+            ] {
+                let target = Bounds {
+                    x: window.x + (45 + dx) * scale,
+                    y: window.y + (20 + dy) * scale,
+                    width: 10 * scale,
+                    height: 10 * scale,
+                };
+                let tail = bubble_tail(window, body, target, 8 * scale, 7 * scale, 10 * scale);
+                assert_eq!(tail.side, side);
+                for (x, y) in tail.points {
+                    assert!((0..window.width).contains(&x));
+                    assert!((0..window.height).contains(&y));
+                }
+            }
+            let far_left = Bounds {
+                x: -2000,
+                y: window.y + window.height + 10,
+                width: 10,
+                height: 10,
+            };
+            let tail = bubble_tail(window, body, far_left, 8 * scale, 7 * scale, 10 * scale);
+            assert_eq!(tail.side, BubbleSide::Bottom);
+            assert!(
+                tail.points[0].0 >= body.x + 10 * scale,
+                "tail base stays clear of the rounded corner"
+            );
+        }
     }
     #[test]
     fn moving_and_resizing_regions_stay_within_the_desktop() {

@@ -449,16 +449,76 @@ pub(super) unsafe fn draw_card(
     x: i32,
     y: i32,
 ) {
+    draw_card_content(dc, theme, dpi, card, (x, y), true);
+}
+pub(super) unsafe fn draw_bubble_card(
+    dc: Handle,
+    theme: &Theme,
+    dpi: u32,
+    card: &HintCard,
+    body: Rect,
+    tail: pokemmo_hint::regions::BubbleTail,
+) {
+    bubble(dc, body, tail, dpi, WHITE, BORDER, 18);
+    draw_card_content(dc, theme, dpi, card, (body.left, body.top), false);
+}
+unsafe fn bubble(
+    dc: Handle,
+    body: Rect,
+    tail: pokemmo_hint::regions::BubbleTail,
+    dpi: u32,
+    fill: u32,
+    edge: u32,
+    radius: i32,
+) {
+    let shape = CreateRoundRectRgn(
+        body.left,
+        body.top,
+        body.right,
+        body.bottom,
+        px(radius, dpi),
+        px(radius, dpi),
+    );
+    let points = tail.points.map(|(x, y)| Point { x, y });
+    let triangle = CreatePolygonRgn(points.as_ptr(), 3, 1);
+    if shape != 0 && triangle != 0 && CombineRgn(shape, shape, triangle, 2) != 0 {
+        let fill = CreateSolidBrush(fill);
+        let border = CreateSolidBrush(edge);
+        FillRgn(dc, shape, fill);
+        FrameRgn(dc, shape, border, px(1, dpi).max(1), px(1, dpi).max(1));
+        DeleteObject(fill);
+        DeleteObject(border);
+    } else {
+        rounded(dc, body, fill, edge, px(radius, dpi));
+    }
+    if shape != 0 {
+        DeleteObject(shape);
+    }
+    if triangle != 0 {
+        DeleteObject(triangle);
+    }
+}
+unsafe fn draw_card_content(
+    dc: Handle,
+    theme: &Theme,
+    dpi: u32,
+    card: &HintCard,
+    origin: (i32, i32),
+    background: bool,
+) {
+    let (x, y) = origin;
     let app = &CardView { theme, dpi };
     let saved = SaveDC(dc);
     SetViewportOrgEx(dc, x - px(20, dpi), y - px(136, dpi), null_mut());
-    rounded(
-        dc,
-        rect(dpi, 20, 136, 580, card_height(theme, dpi, card)),
-        WHITE,
-        BORDER,
-        px(18, dpi),
-    );
+    if background {
+        rounded(
+            dc,
+            rect(dpi, 20, 136, 580, card_height(theme, dpi, card)),
+            WHITE,
+            BORDER,
+            px(18, dpi),
+        );
+    }
     text(
         dc,
         app.theme.title,
@@ -536,15 +596,24 @@ pub(super) unsafe fn label_size(theme: &Theme, dpi: u32, label: &str) -> (i32, i
     ReleaseDC(0, dc);
     (w.max(px(65, dpi)), px(30, dpi))
 }
-pub(super) unsafe fn draw_tag(dc: Handle, theme: &Theme, dpi: u32, label: &str, area: Rect) {
-    let fill = CreateSolidBrush(0xff00ff);
-    FillRect(dc, &area, fill);
-    DeleteObject(fill);
-    let mut r = area;
-    r.right -= 1;
-    r.bottom -= 1;
-    rounded(dc, r, rgb(255, 239, 239), rgb(250, 200, 200), px(10, dpi));
-    text(dc, theme.body, rgb(185, 28, 28), label, r, 1 | 4 | 0x20);
+pub(super) unsafe fn draw_tag(
+    dc: Handle,
+    theme: &Theme,
+    dpi: u32,
+    label: &str,
+    body: Rect,
+    tail: pokemmo_hint::regions::BubbleTail,
+) {
+    bubble(
+        dc,
+        body,
+        tail,
+        dpi,
+        rgb(255, 239, 239),
+        rgb(250, 200, 200),
+        10,
+    );
+    text(dc, theme.body, rgb(185, 28, 28), label, body, 1 | 4 | 0x20);
 }
 
 pub(super) unsafe fn draw_tooltip(dc: Handle, theme: &Theme, dpi: u32, label: &str, area: Rect) {
