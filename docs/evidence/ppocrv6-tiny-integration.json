@@ -1,0 +1,47 @@
+{
+  "dictionary_source": "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/blob/main/inference.yml",
+  "model_sha256": "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6",
+  "dictionary_sha256": "c5cbe34ef40c29c4df07ed012bf96569cb69a2d2a01a07027e9f13cb832bd9cd",
+  "dictionary_characters": 6904,
+  "missing_species": [
+    {
+      "id": 96,
+      "name": "催眠貘",
+      "missing": "貘"
+    },
+    {
+      "id": 97,
+      "name": "引梦貘人",
+      "missing": "貘"
+    },
+    {
+      "id": 215,
+      "name": "狃拉",
+      "missing": "狃"
+    },
+    {
+      "id": 340,
+      "name": "鲶鱼王",
+      "missing": "鲶"
+    },
+    {
+      "id": 441,
+      "name": "聒噪鸟",
+      "missing": "聒"
+    },
+    {
+      "id": 461,
+      "name": "玛狃拉",
+      "missing": "狃"
+    }
+  ],
+  "verified_here": [
+    "pure Rust preprocessing and CTC decoding",
+    "Windows adapter type check"
+  ],
+  "not_verified_here": [
+    "Windows UI and native OCR",
+    "real model inference and NuGet downloads",
+    "MSVC release ZIP"
+  ]
+}

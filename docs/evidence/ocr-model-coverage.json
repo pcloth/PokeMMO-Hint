@@ -1,0 +1,297 @@
+{
+  "model": "tessdata_fast chi_sim.traineddata",
+  "model_sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+  "lstm_unicharset_entries": 4022,
+  "species_count": 649,
+  "species_with_missing_characters": 57,
+  "missing_character_count": 38,
+  "missing_characters": "咩喵噗嚏幔彷徨榛槌毽狃狒狡猾獭瓢聒舔蚣蚪蛹蜈蜍蜓蜴蜻蝌螯螳蟀貘铛雉霏颚骷鲶鼬",
+  "affected_species": [
+    {
+      "id": 11,
+      "name": "铁甲蛹",
+      "missing": "蛹"
+    },
+    {
+      "id": 14,
+      "name": "铁壳蛹",
+      "missing": "蛹"
+    },
+    {
+      "id": 52,
+      "name": "喵喵",
+      "missing": "喵"
+    },
+    {
+      "id": 60,
+      "name": "蚊香蝌蚪",
+      "missing": "蚪蝌"
+    },
+    {
+      "id": 96,
+      "name": "催眠貘",
+      "missing": "貘"
+    },
+    {
+      "id": 97,
+      "name": "引梦貘人",
+      "missing": "貘"
+    },
+    {
+      "id": 123,
+      "name": "飞天螳螂",
+      "missing": "螳"
+    },
+    {
+      "id": 165,
+      "name": "芭瓢虫",
+      "missing": "瓢"
+    },
+    {
+      "id": 166,
+      "name": "安瓢虫",
+      "missing": "瓢"
+    },
+    {
+      "id": 179,
+      "name": "咩利羊",
+      "missing": "咩"
+    },
+    {
+      "id": 187,
+      "name": "毽子草",
+      "missing": "毽"
+    },
+    {
+      "id": 188,
+      "name": "毽子花",
+      "missing": "毽"
+    },
+    {
+      "id": 189,
+      "name": "毽子棉",
+      "missing": "毽"
+    },
+    {
+      "id": 193,
+      "name": "蜻蜻蜓",
+      "missing": "蜓蜻"
+    },
+    {
+      "id": 204,
+      "name": "榛果球",
+      "missing": "榛"
+    },
+    {
+      "id": 212,
+      "name": "巨钳螳螂",
+      "missing": "螳"
+    },
+    {
+      "id": 215,
+      "name": "狃拉",
+      "missing": "狃"
+    },
+    {
+      "id": 253,
+      "name": "森林蜥蜴",
+      "missing": "蜴"
+    },
+    {
+      "id": 254,
+      "name": "蜥蜴王",
+      "missing": "蜴"
+    },
+    {
+      "id": 275,
+      "name": "狡猾天狗",
+      "missing": "狡猾"
+    },
+    {
+      "id": 287,
+      "name": "懒人獭",
+      "missing": "獭"
+    },
+    {
+      "id": 300,
+      "name": "向尾喵",
+      "missing": "喵"
+    },
+    {
+      "id": 326,
+      "name": "噗噗猪",
+      "missing": "噗"
+    },
+    {
+      "id": 328,
+      "name": "大颚蚁",
+      "missing": "颚"
+    },
+    {
+      "id": 330,
+      "name": "沙漠蜻蜓",
+      "missing": "蜓蜻"
+    },
+    {
+      "id": 335,
+      "name": "猫鼬斩",
+      "missing": "鼬"
+    },
+    {
+      "id": 340,
+      "name": "鲶鱼王",
+      "missing": "鲶"
+    },
+    {
+      "id": 342,
+      "name": "铁螯龙虾",
+      "missing": "螯"
+    },
+    {
+      "id": 356,
+      "name": "彷徨夜灵",
+      "missing": "彷徨"
+    },
+    {
+      "id": 402,
+      "name": "音箱蟀",
+      "missing": "蟀"
+    },
+    {
+      "id": 409,
+      "name": "战槌龙",
+      "missing": "槌"
+    },
+    {
+      "id": 418,
+      "name": "泳圈鼬",
+      "missing": "鼬"
+    },
+    {
+      "id": 419,
+      "name": "浮潜鼬",
+      "missing": "鼬"
+    },
+    {
+      "id": 431,
+      "name": "魅力喵",
+      "missing": "喵"
+    },
+    {
+      "id": 432,
+      "name": "东施喵",
+      "missing": "喵"
+    },
+    {
+      "id": 433,
+      "name": "铃铛响",
+      "missing": "铛"
+    },
+    {
+      "id": 434,
+      "name": "臭鼬噗",
+      "missing": "噗鼬"
+    },
+    {
+      "id": 435,
+      "name": "坦克臭鼬",
+      "missing": "鼬"
+    },
+    {
+      "id": 441,
+      "name": "聒噪鸟",
+      "missing": "聒"
+    },
+    {
+      "id": 454,
+      "name": "毒骷蛙",
+      "missing": "骷"
+    },
+    {
+      "id": 461,
+      "name": "玛狃拉",
+      "missing": "狃"
+    },
+    {
+      "id": 463,
+      "name": "大舌舔",
+      "missing": "舔"
+    },
+    {
+      "id": 469,
+      "name": "远古巨蜓",
+      "missing": "蜓"
+    },
+    {
+      "id": 489,
+      "name": "霏欧纳",
+      "missing": "霏"
+    },
+    {
+      "id": 490,
+      "name": "玛纳霏",
+      "missing": "霏"
+    },
+    {
+      "id": 501,
+      "name": "水水獭",
+      "missing": "獭"
+    },
+    {
+      "id": 521,
+      "name": "高傲雉鸡",
+      "missing": "雉"
+    },
+    {
+      "id": 525,
+      "name": "地幔岩",
+      "missing": "幔"
+    },
+    {
+      "id": 535,
+      "name": "圆蝌蚪",
+      "missing": "蚪蝌"
+    },
+    {
+      "id": 536,
+      "name": "蓝蟾蜍",
+      "missing": "蜍"
+    },
+    {
+      "id": 537,
+      "name": "蟾蜍王",
+      "missing": "蜍"
+    },
+    {
+      "id": 543,
+      "name": "百足蜈蚣",
+      "missing": "蚣蜈"
+    },
+    {
+      "id": 545,
+      "name": "蜈蚣王",
+      "missing": "蚣蜈"
+    },
+    {
+      "id": 555,
+      "name": "达摩狒狒",
+      "missing": "狒"
+    },
+    {
+      "id": 613,
+      "name": "喷嚏熊",
+      "missing": "嚏"
+    },
+    {
+      "id": 619,
+      "name": "功夫鼬",
+      "missing": "鼬"
+    },
+    {
+      "id": 620,
+      "name": "师父鼬",
+      "missing": "鼬"
+    }
+  ],
+  "interpretation": "These names cannot be emitted exactly by this LSTM character table. Preprocessing or user-words cannot add unseen output characters. This is separate from recognition accuracy for covered characters."
+}

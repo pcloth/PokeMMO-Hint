@@ -2,8 +2,9 @@
 #![allow(non_snake_case, dead_code)]
 #[cfg(all(windows, not(target_pointer_width = "64")))]
 compile_error!("This prototype requires 64-bit Windows Rust.");
-use crate::ocr::OcrConfig;
-use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap};
+use crate::ocr::Backend;
+use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap, white_text_bitmap};
+use pokemmo_hint::engines::{self, EngineSettings};
 use pokemmo_hint::{
     hint_card, lookup_query, resolve_reads, species_data, HintCard, MatchResult, NameSuggestion,
     Roi, Tracker,
@@ -13,6 +14,7 @@ use std::sync::Mutex;
 mod overlay;
 mod paint;
 mod selection_edit;
+mod settings;
 mod tooltips;
 use pokemmo_hint::regions::{Bounds, RegionSettings, Selection, MAX_REGIONS};
 use std::cell::RefCell;
@@ -107,6 +109,7 @@ extern "system" {
     fn GetDpiForWindow(hwnd: Handle) -> u32;
     fn AdjustWindowRectExForDpi(rect: *mut Rect, style: u32, menu: i32, ex: u32, dpi: u32) -> i32;
     fn EnableWindow(hwnd: Handle, enable: i32) -> i32;
+    fn SetForegroundWindow(hwnd: Handle) -> i32;
     fn GetCursorPos(point: *mut Point) -> i32;
     fn SetWindowDisplayAffinity(hwnd: Handle, affinity: u32) -> i32;
     fn MonitorFromPoint(point: Point, flags: u32) -> Handle;
@@ -312,6 +315,7 @@ struct App {
     status: String,
     body: String,
     card: Option<HintCard>,
+    card_height: i32,
     suggestion: Option<NameSuggestion>,
     confirm: Handle,
     theme: Rc<paint::Theme>,
@@ -320,6 +324,7 @@ struct App {
     edit: Handle,
     start: Handle,
     settings: RegionSettings,
+    engine_settings: EngineSettings,
     selector: Handle,
     slots: Vec<SlotState>,
     details: Option<overlay::Window>,
@@ -365,6 +370,7 @@ impl App {
         self.body = body.to_owned();
         self.card = card;
         self.suggestion = suggestion;
+        self.layout_card();
         unsafe {
             if let Some(s) = &self.suggestion {
                 if let Some(species) = species_data().iter().find(|p| p.id == s.id) {
@@ -375,6 +381,55 @@ impl App {
                 ShowWindow(self.confirm, 0);
             }
             InvalidateRect(self.hwnd, null(), 0);
+        }
+    }
+    fn layout_card(&mut self) {
+        unsafe {
+            if IsIconic(self.hwnd) != 0 {
+                return;
+            }
+            let height = self
+                .card
+                .as_ref()
+                .map(|card| paint::card_height(&self.theme, self.dpi, card))
+                .unwrap_or(258)
+                .max(258);
+            if height == self.card_height {
+                return;
+            }
+            self.card_height = height;
+            let offset = height - 258;
+            for (control, x, y, w, h) in [
+                (self.edit, 20, 436, 170, 32),
+                (GetDlgItem(self.hwnd, 104), 200, 435, 44, 34),
+                (self.confirm, 254, 435, 44, 34),
+            ] {
+                SetWindowPos(
+                    control,
+                    0,
+                    paint::px(x, self.dpi),
+                    paint::px(y + offset, self.dpi),
+                    paint::px(w, self.dpi),
+                    paint::px(h, self.dpi),
+                    0x14,
+                );
+            }
+            let mut bounds = Rect {
+                left: 0,
+                top: 0,
+                right: paint::px(620, self.dpi),
+                bottom: paint::px(480 + offset, self.dpi),
+            };
+            AdjustWindowRectExForDpi(&mut bounds, 0x02ca0000, 0, 0x8, self.dpi);
+            SetWindowPos(
+                self.hwnd,
+                0,
+                0,
+                0,
+                bounds.right - bounds.left,
+                bounds.bottom - bounds.top,
+                0x16,
+            );
         }
     }
     fn persist(&mut self) -> Result<(), String> {
@@ -434,7 +489,7 @@ impl App {
         if self.settings.selections.len() > MAX_REGIONS {
             return Err(format!("最多支持 {MAX_REGIONS} 个选区"));
         }
-        let config = OcrConfig::discover()?;
+        let config = Backend::selected(self.engine_settings)?;
         for s in &self.settings.selections {
             s.roi.validate(s.width, s.height)?;
         }
@@ -456,6 +511,7 @@ impl App {
                 .collect();
             let context = WorkerContext {
                 config: config.clone(),
+                refresh_interval: Duration::from_millis(self.engine_settings.refresh_interval_ms),
                 own: self.hwnd,
                 stop: self.stop.clone(),
                 tx: tx.clone(),
@@ -597,7 +653,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
     } // custom-painted background
     if !matches!(
         msg,
-        WM_COMMAND | WM_TIMER | WM_DESTROY | WM_PAINT | 0x2b | 0x133 | 0x232
+        WM_COMMAND | WM_TIMER | WM_DESTROY | WM_PAINT | 0x2b | 0x133 | 0x232 | 0x5
     ) {
         return DefWindowProcW(hwnd, msg, w, l);
     }
@@ -633,6 +689,10 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
         return DefWindowProcW(hwnd, msg, w, l);
     };
     match msg {
+        0x5 if w == 0 => {
+            app.layout_card();
+            0
+        } // SIZE_RESTORED: results may arrive while minimized.
         WM_COMMAND => {
             let id = w & 0xffff;
             let notification = w >> 16;
@@ -680,13 +740,38 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         }
                     }
                 }
+                111 => {
+                    let resume = !app.workers.is_empty();
+                    app.halt();
+                    match settings::edit(hwnd, app.engine_settings, app.theme.clone(), app.dpi) {
+                        Ok(Some(value)) => match engines::save_settings(value) {
+                            Ok(()) => {
+                                app.engine_settings = value;
+                                app.status("识别设置已保存。");
+                            }
+                            Err(e) => app.status(&format!("保存设置失败：{e}")),
+                        },
+                        Ok(None) => app.status("已取消设置。"),
+                        Err(e) => app.status(&e),
+                    }
+                    if resume {
+                        if let Err(e) = app.start() {
+                            app.status(&e);
+                        }
+                    }
+                }
                 102 => {
                     if !app.workers.is_empty() {
                         app.halt();
                         app.status("已暂停，浮动标签已隐藏。");
                         app.content("可继续添加选区，或使用下方查询。", None, None);
-                    } else if let Err(e) = app.start() {
-                        app.status(&e);
+                    } else {
+                        match app.start() {
+                            Ok(()) => {
+                                ShowWindow(hwnd, 6);
+                            } // SW_MINIMIZE, only after Start succeeds
+                            Err(e) => app.status(&e),
+                        }
                     }
                 }
                 103 => {
@@ -935,6 +1020,7 @@ pub fn run() -> Result<(), String> {
         register("PokeMMOHintOverlay", overlay::window_proc)?;
         register("PokeMMOHintEditRegion", selection_edit::window_proc)?;
         register("PokeMMOHintButtonTip", tooltips::window_proc)?;
+        register("PokeMMOHintSettings", settings::window_proc)?;
         let (settings, load_error) = load_settings();
         let hwnd = CreateWindowExW(
             0x8,
@@ -988,6 +1074,7 @@ pub fn run() -> Result<(), String> {
             status: "框选一行名字或 No.编号，然后开始识别。".to_owned(),
             body: "也可以在下方输入中文名字或全国编号查询。".to_owned(),
             card: None,
+            card_height: 258,
             suggestion: None,
             confirm: 0,
             theme: Rc::new(paint::Theme::new(dpi)),
@@ -996,6 +1083,7 @@ pub fn run() -> Result<(), String> {
             edit: 0,
             start: 0,
             settings,
+            engine_settings: engines::load_settings().unwrap_or_default(),
             selector: 0,
             slots: Vec::new(),
             details: None,
@@ -1124,7 +1212,18 @@ pub fn run() -> Result<(), String> {
             px(30),
         );
         let mut tooltips = tooltips::Tooltips::new(hwnd, app.theme.clone(), dpi);
-        for id in [102, 101, 103, 107, 104, 106, 110, 109] {
+        control(
+            hwnd,
+            "BUTTON",
+            "识别设置",
+            0,
+            111,
+            px(236),
+            px(58),
+            px(44),
+            px(36),
+        );
+        for id in [102, 101, 103, 107, 104, 106, 110, 109, 111] {
             tooltips.add(GetDlgItem(hwnd, id));
         }
         app.rebuild_selector();
@@ -1455,7 +1554,8 @@ struct Scratch {
     directory: PathBuf,
     image: PathBuf,
     alternate: PathBuf,
-    words: PathBuf,
+    white: PathBuf,
+    windows_script: PathBuf,
 }
 impl Scratch {
     fn create() -> Result<Self, String> {
@@ -1472,28 +1572,24 @@ impl Scratch {
         let scratch = Self {
             image: directory.join("capture.bmp"),
             alternate: directory.join("alternate.bmp"),
-            words: directory.join("species-words.txt"),
+            white: directory.join("white-text.bmp"),
+            windows_script: directory.join("windows-ocr.ps1"),
             directory,
         };
-        let words = species_data()
-            .into_iter()
-            .map(|s| s.name)
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&scratch.words, words).map_err(|e| e.to_string())?;
+        std::fs::write(&scratch.windows_script, include_str!("windows_ocr.ps1"))
+            .map_err(|e| e.to_string())?;
         Ok(scratch)
     }
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
-        for path in [&self.image, &self.alternate, &self.words] {
-            let _ = std::fs::remove_file(path);
-        }
-        let _ = std::fs::remove_dir(&self.directory);
+        let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
+
 struct WorkerContext {
-    config: OcrConfig,
+    config: Backend,
+    refresh_interval: Duration,
     own: Handle,
     stop: Arc<AtomicBool>,
     tx: mpsc::Sender<Update>,
@@ -1503,6 +1599,7 @@ struct WorkerContext {
 fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
     let WorkerContext {
         config,
+        refresh_interval,
         own,
         stop,
         tx,
@@ -1527,7 +1624,9 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
     };
     let data = species_data();
     let mut trackers: Vec<Tracker> = selections.iter().map(|_| Tracker::default()).collect();
+
     while !stop.load(Ordering::Relaxed) {
+        let round_started = Instant::now();
         for ((index, selected), tracker) in selections.iter().zip(trackers.iter_mut()) {
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -1559,10 +1658,18 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                     ocr_bitmap(&pixels, selected.roi.width, selected.roi.height),
                 )
                 .map_err(|e| e.to_string())?;
+                let alternate = if let Some(white) =
+                    white_text_bitmap(&pixels, selected.roi.width, selected.roi.height)
+                {
+                    std::fs::write(&scratch.white, white).map_err(|e| e.to_string())?;
+                    Some(scratch.white.as_path())
+                } else {
+                    None
+                };
                 let raw =
-                    config.recognize_with_words(&scratch.image, &stop, Some(&scratch.words))?;
+                    config.recognize(&scratch.image, alternate, &scratch.windows_script, &stop)?;
                 let aliases = confirmed.lock().map_err(|_| "确认记录不可用")?.clone();
-                let mut reads = vec![raw];
+                let mut reads = raw.lines().map(str::to_owned).collect::<Vec<_>>();
                 let mut decision = resolve_reads(&reads, &data, &aliases);
                 if decision.result == MatchResult::Unknown && !stop.load(Ordering::Relaxed) {
                     std::fs::write(
@@ -1570,10 +1677,10 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                         binary_bitmap(&pixels, selected.roi.width, selected.roi.height),
                     )
                     .map_err(|e| e.to_string())?;
-                    if let Ok(alternate) =
-                        config.recognize_with_words(&scratch.alternate, &stop, Some(&scratch.words))
+                    if let Ok(raw) =
+                        config.recognize(&scratch.alternate, None, &scratch.windows_script, &stop)
                     {
-                        reads.push(alternate);
+                        reads.extend(raw.lines().map(str::to_owned));
                         decision = resolve_reads(&reads, &data, &aliases);
                     }
                 }
@@ -1653,11 +1760,12 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                 return;
             }
         }
-        for _ in 0..10 {
-            if stop.load(Ordering::Relaxed) {
+        while !stop.load(Ordering::Relaxed) {
+            let remaining = refresh_interval.saturating_sub(round_started.elapsed());
+            if remaining.is_zero() {
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(remaining.min(Duration::from_millis(50)));
         }
     }
 }

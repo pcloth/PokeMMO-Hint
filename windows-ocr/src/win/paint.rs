@@ -46,7 +46,7 @@ impl Theme {
             small: font(12, 400),
             title: font(23, 600),
             white: CreateSolidBrush(WHITE),
-            buttons: (10..=18)
+            buttons: (10..=22)
                 .map(|id| {
                     LoadImageW(
                         GetModuleHandleW(null()),
@@ -87,7 +87,14 @@ unsafe fn rounded(dc: Handle, r: Rect, fill: u32, edge: u32, radius: i32) {
     DeleteObject(pen);
     DeleteObject(brush);
 }
-unsafe fn text(dc: Handle, font: Handle, color: u32, value: &str, mut r: Rect, flags: u32) {
+pub(super) unsafe fn text(
+    dc: Handle,
+    font: Handle,
+    color: u32,
+    value: &str,
+    mut r: Rect,
+    flags: u32,
+) {
     let old = SelectObject(dc, font);
     SetBkMode(dc, 1);
     SetTextColor(dc, color);
@@ -103,7 +110,7 @@ unsafe fn measure(dc: Handle, font: Handle, value: &str) -> i32 {
     SelectObject(dc, old);
     size.x
 }
-fn rect(dpi: u32, x: i32, y: i32, w: i32, h: i32) -> Rect {
+pub(super) fn rect(dpi: u32, x: i32, y: i32, w: i32, h: i32) -> Rect {
     Rect {
         left: px(x, dpi),
         top: px(y, dpi),
@@ -137,6 +144,42 @@ unsafe fn chip(
     text(dc, app.theme.body, color, label, r, 1 | 4 | 0x20);
     width
 }
+fn effect_label(item: &TypeEffect) -> String {
+    let suffix = match item.multiplier {
+        4.0 => "×4",
+        2.0 => "×2",
+        0.5 => "×½",
+        0.25 => "×¼",
+        _ => "",
+    };
+    format!("{}{}", TYPE_NAMES[item.type_id], suffix)
+}
+unsafe fn effects_end(dc: Handle, theme: &Theme, dpi: u32, items: &[TypeEffect], y: i32) -> i32 {
+    let (mut x, mut line) = (px(106, dpi), px(y, dpi));
+    for item in items {
+        let width = measure(dc, theme.body, &effect_label(item)) + px(14, dpi);
+        if x + width > px(578, dpi) {
+            x = px(106, dpi);
+            line += px(35, dpi);
+        }
+        x += width + px(5, dpi);
+    }
+    (line * 96 / dpi as i32) + 40
+}
+pub(super) unsafe fn card_height(theme: &Theme, dpi: u32, card: &HintCard) -> i32 {
+    let dc = GetDC(0);
+    let mut y = 215;
+    for items in [
+        &card.weaknesses,
+        &card.neutral,
+        &card.resistances,
+        &card.immunities,
+    ] {
+        y = effects_end(dc, theme, dpi, items, y) + 7;
+    }
+    ReleaseDC(0, dc);
+    y - 7 - 136 + 12
+}
 unsafe fn effects(
     dc: Handle,
     app: &CardView<'_>,
@@ -169,14 +212,7 @@ unsafe fn effects(
         return y + 40;
     }
     for item in items {
-        let suffix = match item.multiplier {
-            4.0 => "×4",
-            2.0 => "×2",
-            0.5 => "×½",
-            0.25 => "×¼",
-            _ => "",
-        };
-        let label = format!("{}{}", TYPE_NAMES[item.type_id], suffix);
+        let label = effect_label(item);
         let width = measure(dc, app.theme.body, &label) + px(14, dpi);
         if x + width > px(578, dpi) {
             x = px(106, dpi);
@@ -204,7 +240,11 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         dc,
         app.theme.small,
         MUTED,
-        &format!("{} 个选区 · 本地识别", app.settings.selections.len()),
+        &format!(
+            "{} 个选区 · {}",
+            app.settings.selections.len(),
+            app.engine_settings.engine.label()
+        ),
         rect(dpi, 195, 24, 250, 22),
         0x20,
     );
@@ -233,7 +273,6 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         rect(dpi, 314, 104, 284, 23),
         0x20 | 0x8000,
     );
-    rounded(dc, rect(dpi, 20, 136, 580, 258), WHITE, BORDER, px(18, dpi));
     if let Some(card) = &app.card {
         draw_card(
             dc,
@@ -244,6 +283,13 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             px(136, app.dpi),
         );
     } else {
+        rounded(
+            dc,
+            rect(dpi, 20, 136, 580, app.card_height),
+            WHITE,
+            BORDER,
+            px(18, dpi),
+        );
         let title = if app.suggestion.is_some() {
             "找到一个可能的物种"
         } else if !app.workers.is_empty() {
@@ -273,7 +319,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         app.theme.small,
         MUTED,
         "手动查询",
-        rect(dpi, 22, 410, 120, 19),
+        rect(dpi, 22, 410 + app.card_height - 258, 120, 19),
         0x20,
     );
     if app.suggestion.is_none() {
@@ -330,6 +376,11 @@ pub(super) unsafe fn button(item: &DrawItem, theme: &Theme, dpi: u32) {
         106 => 6,
         110 => 7,
         109 => 8,
+        111 => 9,
+        201 => 6,
+        202 => 10,
+        203 => 11,
+        204 => 12,
         _ => 0,
     };
     let size = px(
@@ -401,7 +452,13 @@ pub(super) unsafe fn draw_card(
     let app = &CardView { theme, dpi };
     let saved = SaveDC(dc);
     SetViewportOrgEx(dc, x - px(20, dpi), y - px(136, dpi), null_mut());
-    rounded(dc, rect(dpi, 20, 136, 580, 258), WHITE, BORDER, px(18, dpi));
+    rounded(
+        dc,
+        rect(dpi, 20, 136, 580, card_height(theme, dpi, card)),
+        WHITE,
+        BORDER,
+        px(18, dpi),
+    );
     text(
         dc,
         app.theme.title,
@@ -443,6 +500,15 @@ pub(super) unsafe fn draw_card(
         215,
         rgb(255, 239, 239),
         rgb(185, 28, 28),
+    );
+    let y = effects(
+        dc,
+        app,
+        "普通伤害",
+        &card.neutral,
+        y + 7,
+        rgb(241, 245, 249),
+        MUTED,
     );
     let y = effects(
         dc,

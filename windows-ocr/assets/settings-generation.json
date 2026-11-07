@@ -1,0 +1,24 @@
+{
+  "tool": "built-in image_gen.imagegen",
+  "prompt": "Generate a transparent 2 by 2 sprite sheet of four consistent Windows utility toolbar icons, matching dark navy rounded outlines, cyan/light blue fill, gold accents and restrained dimensional shading of the existing Pokémon OCR helper toolbar. Top left: settings gear. Top right: cancel X. Bottom left: download arrow into tray. Bottom right: open folder. Center each simple pictogram in its equal cell with generous transparent margins. No text, grid, tile backgrounds, watermark or extra symbols. Legible at 24 pixels.",
+  "source": "settings-sheet.png",
+  "icons": [
+    "settings",
+    "cancel",
+    "download",
+    "folder"
+  ],
+  "resource_groups": [
+    19,
+    20,
+    21,
+    22
+  ],
+  "sizes": [
+    24,
+    32,
+    48,
+    64
+  ],
+  "conversion": "Equal cell extraction and ICO resampling of the imagegen output, preserving alpha."
+}

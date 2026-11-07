@@ -29,6 +29,7 @@ fn main() {
     append_icon(&mut resources, "assets/app.ico", 1, &mut next_id);
     for (index, name) in [
         "play", "pause", "add", "delete", "clear", "search", "confirm", "adjust", "save",
+        "settings", "cancel", "download", "folder",
     ]
     .iter()
     .enumerate()

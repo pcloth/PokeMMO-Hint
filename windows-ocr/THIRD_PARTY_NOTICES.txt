@@ -1,30 +1,33 @@
 PokeMMO Hint - Third-party components
 
-1. Simplified Chinese OCR model (chi_sim.traineddata)
-   Upstream: https://github.com/tesseract-ocr/tessdata_fast
-   Download: https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata
-   License: Apache License 2.0; full text in licenses/tessdata-fast-LICENSE.txt.
-   The model is distributed without modification. Its SHA-256 is recorded in release.json.
+1. PP-OCRv6 tiny recognition dictionary and optional model
+   Copyright PaddlePaddle Authors. Apache License 2.0.
+   https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx
+   The embedded dictionary is extracted from the official inference.yml character_dict,
+   in original order. License text: licenses/paddle-LICENSE.txt.
+   The model weights are NOT included in this ZIP. They download only when selected.
+   Model SHA-256: 9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6
 
-2. Tesseract OCR runtime
-   This portable release redistributes tesseract.exe and the transitive non-Windows DLL
-   dependencies from the publisher's x64 Tesseract distribution. No installer, training
-   utilities, unrelated DLLs or extra language models are included.
-   The distribution's supplied license, copyright and author files are preserved under
-   licenses/tesseract-runtime/. Engine version, file hashes and system-only dependencies
-   are recorded in ocr/runtime.json. These libraries are separate components with their
-   own licenses; the Apache model license does not replace their notices.
-   Tesseract: https://github.com/tesseract-ocr/tesseract
-   Windows build: https://github.com/UB-Mannheim/tesseract
-   Dependency source/notice reference: licenses/ocr-components.json
+2. Optional ONNX Runtime
+   Copyright Microsoft Corporation. MIT License.
+   https://github.com/microsoft/onnxruntime
+   No native runtime DLL is included in this ZIP. The app downloads the fixed
+   Microsoft.ML.OnnxRuntime.DirectML 1.22.0 NuGet package from Microsoft sources,
+   extracts Windows x64 native components and uses the CPU execution provider.
+   Upstream license and third-party notices are retained alongside downloaded files.
+   The DirectML GPU provider is not enabled; no separate DirectML redistributable is used.
 
-3. Species facts
+3. Windows.Media.Ocr
+   An operating-system feature, used under the recipient's Windows license.
+   No Windows OCR binaries or language models are redistributed by this app.
+
+4. Species facts
    The included table contains national numbers 1-649, Chinese species names and base
-   elemental types. It contains no ROM, game code, artwork, dialogue, saves or game client.
-   Alternate forms are not independently supported. The publisher must not include ROMs.
+   types. It contains no ROM, game code, artwork, dialogue, saves or game client.
+   Alternate forms are not independently supported.
 
-4. Application artwork
-   The app icon and toolbar artwork were generated with imagegen. The source repository
-   retains the original PNG files, icon sizes and generation prompts.
+5. Application artwork
+   App and toolbar icons generated with imagegen. Source PNGs and prompts are in
+   the repository assets directory, including settings-generation.json.
 
-This helper is an independent application, not an official PokeMMO or Pokemon product.
+This is an independent application, not an official PokeMMO or Pokemon product.

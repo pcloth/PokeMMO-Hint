@@ -105,7 +105,14 @@ impl Window {
         if self.context.full {
             (
                 paint::px(600, self.context.dpi),
-                paint::px(278, self.context.dpi),
+                paint::px(
+                    paint::card_height(
+                        &self.context.theme,
+                        self.context.dpi,
+                        &self.context.content.borrow().card,
+                    ) + 20,
+                    self.context.dpi,
+                ),
             )
         } else {
             paint::label_size(

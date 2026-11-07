@@ -10,6 +10,8 @@
 
 # OCR runtime/model downloads: setup/release scripts prepare these locally.
 /windows-ocr/ocr/
+*.onnx
+*.nupkg
 *.traineddata
 *.download
 
@@ -41,6 +43,8 @@ regions.tmp
 screen-regions.txt
 screen-regions.tmp
 roi.txt
+ocr-settings.txt
+ocr-settings.tmp
 
 # Editor/OS/session files
 /.idea/

@@ -1,0 +1,111 @@
+{
+  "engine": "Linux Tesseract 5.3.4 C API",
+  "model_sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+  "source": "User Zangoose screenshot; original not copied into repository",
+  "psm": 7,
+  "scope": "Three crops of one screenshot. No Windows OCR execution or general accuracy claim.",
+  "root_cause": "鼬 is absent from the actual model LSTM unicharset",
+  "results": [
+    {
+      "crop": [
+        78,
+        32,
+        129,
+        58
+      ],
+      "mode": "gray",
+      "text": "猫贷斩",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        78,
+        32,
+        129,
+        58
+      ],
+      "mode": "white",
+      "text": "猎山斩",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        78,
+        32,
+        129,
+        58
+      ],
+      "mode": "binary",
+      "text": "猫山斩",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        75,
+        30,
+        207,
+        59
+      ],
+      "mode": "gray",
+      "text": "猫山新Lv. 27 3",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        75,
+        30,
+        207,
+        59
+      ],
+      "mode": "white",
+      "text": "镀山新 Lv、27",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        75,
+        30,
+        207,
+        59
+      ],
+      "mode": "binary",
+      "text": "猫山新 Lv. 27 :",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        65,
+        25,
+        250,
+        65
+      ],
+      "mode": "gray",
+      "text": "猫山新Lv. 27 5",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        65,
+        25,
+        250,
+        65
+      ],
+      "mode": "white",
+      "text": "镀山新 Lv、27",
+      "exact_species_match": false
+    },
+    {
+      "crop": [
+        65,
+        25,
+        250,
+        65
+      ],
+      "mode": "binary",
+      "text": "镀助新Lv. 27 3",
+      "exact_species_match": false
+    }
+  ],
+  "windows_ocr_fallback": "Implemented, requires an already available Simplified Chinese Windows OCR recognizer; not runnable in this environment",
+  "user_words": false
+}

@@ -1,89 +1,46 @@
 # Windows 发版
 
-目前交付内置引擎的便携 ZIP：应用 EXE、Tesseract 命令行程序、它递归依赖的运行 DLL、中文模型、用户说明。用户解压即可离线运行，无需管理员权限，无需安装 Tesseract，也不需要 Rust 或编译工具。
+0.7.0 使用轻量基础 ZIP：EXE、用户说明与许可材料。**不包含 Tesseract、模型权重或 ONNX Runtime DLL**。Windows 中文 OCR 为默认；PP-OCRv6 tiny 在应用设置中选择后自动下载。首次准备完成后可离线识别，截图不上传。
 
-## 发布者准备
+## 构建与打包
 
-使用 64 位 Windows 10／11、Windows PowerShell 5.1 或更高版本、Windows Rust、MSVC C++ Build Tools 和 Windows SDK。编译目标为 `x86_64-pc-windows-msvc`，不使用 WSL 的 Linux Rust。源码无额外 Rust crate，Cargo 使用锁文件离线构建；缺少 MSVC 工具或 Rust 目标时需先安装。
-
-在仓库根目录运行：
+需要 Windows x64、PowerShell 5.1+、Windows Rust、MSVC C++ Build Tools 与 Windows SDK。Rust 无外部 crate，使用锁文件离线构建。发布者无需先安装任意识别引擎或下载模型。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_windows.ps1
 ```
 
-脚本自动完成：
+脚本读取 Cargo 版本，执行 release 测试与静态 CRT 编译，检查 PE 的 x64 架构及 GUI 子系统，执行编号查询自检。随后生成 `release.json`、逐文件 SHA-256，压缩、重新解压核对全部文件，并再次运行包内 EXE 查询。最后输出 ZIP 和 `.zip.sha256`。默认拒绝覆盖同版本；可加 `-Force` 或 `-OutputDirectory D:\releases`。原 `-TesseractDirectory` 参数已移除。
 
-1. 从 `windows-ocr/Cargo.toml` 读取版本；检测输出重名。查找发布者本机的 x64 Tesseract 运行目录，或使用 `-TesseractDirectory` 指定。
-2. 准备 `chi_sim.traineddata`，缺失时从官方 tessdata_fast 下载；与仓库 `release/model.sha256` 固定哈希核对。已有但不同版本的模型会报错，需先移开再重试。
-3. 使用静态 MSVC CRT，执行 release 测试、编译及两条编号查询自检。发布者需准备完整的 x64 OCR 运行目录；可使用已有安装或先运行开发用 `setup.ps1 -InstallOcr -NoLaunch`。用户无需安装。
-4. 校验 EXE 为 Windows x64，解析引擎与各 DLL 的 PE 普通／延迟导入表，递归收集非 Windows 系统依赖。缺少 DLL 或发现错误架构会停止打包；不复制训练工具、卸载程序和无关语言。将来源运行目录提供的许可／署名文件一同保留。
-5. 生成版本／构建信息 `release.json` 和逐文件 `SHA256SUMS.txt`。
-6. 压缩后重新解压，逐文件核对 SHA-256，重新遍历包内 DLL 依赖；缩减 PATH，仅用包内引擎／模型生成并识别 `No.573` 测试图片，再执行编号查询。
-7. 成功后生成最终 ZIP 和外部 `.zip.sha256`，清理临时目录并恢复原 Rust 环境变量。
-
-自定义输出目录、覆盖同版本：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_windows.ps1 -OutputDirectory D:\releases -TesseractDirectory "C:\Program Files\Tesseract-OCR" -Force
-```
-
-默认不覆盖现有包。后续版本先修改 `Cargo.toml` 中的 `version`，再执行 `cargo generate-lockfile --manifest-path .\windows-ocr\Cargo.toml --offline` 同步锁文件中的包版本，提交源码和锁文件后再发版。`-Force` 用于重新打包同版本，不会修改版本号。
-
-## 包内结构
+版本在 `windows-ocr/Cargo.toml` 修改后，用 `cargo generate-lockfile --manifest-path .\windows-ocr\Cargo.toml --offline` 同步锁文件。脚本只生成本地包，不上传或修改 Git。
 
 ```text
-PokeMMO-Hint-v0.5.1-windows-x64/
+PokeMMO-Hint-v0.7.0-windows-x64/
   pokemmo-hint.exe
   README.txt
   release.json
   SHA256SUMS.txt
   THIRD_PARTY_NOTICES.txt
-  licenses/
-    tessdata-fast-LICENSE.txt
-    ocr-components.json
-    tesseract-runtime/
-      doc/
-        LICENSE
-        AUTHORS
-  ocr/
-    tesseract.exe
-    libtesseract-5.dll
-    ...其他运行 DLL...
-    runtime.json
-    tessdata/
-      chi_sim.traineddata
+  licenses/paddle-LICENSE.txt
 ```
 
-不打包源码构建缓存、ROM、游戏客户端、截图或发布者的选区配置。用户屏幕选区配置在 `%LOCALAPPDATA%\PokeMMOHint\screen-regions.txt`。旧版游戏窗口坐标不能直接转换，原 `regions.txt`／`roi.txt` 保留，升级后需重新框选一次；此后屏幕选区自动保存。
+用户解压后双击 EXE，正常运行没有终端窗口。选区和引擎偏好保存在 `%LOCALAPPDATA%\PokeMMOHint\`，不随发行包分发。旧版的 `ocr/` 目录不再需要，建议将新版本解压到新文件夹。
 
-用户直接双击 `pokemmo-hint.exe`。程序按 Windows GUI 子系统编译，发行包不再包含 `Start.cmd`，正常启动只显示主界面。应用优先使用相邻 `ocr/` 文件夹；系统已有其他 Tesseract 不影响便携版选择。OCR 子进程保持无控制台启动。主界面启动失败时用 Windows 错误对话框提示。
+## 首次选择引擎
 
-发版脚本会检查 PE 子系统为 GUI（2），拒绝打包控制台版本。编号／OCR 自检使用显式重定向输出和等待退出，继续核对退出码与 `#573` 结果；不依赖 GUI 程序自动附着终端。
+齿轮 → 选择引擎 → 等待准备 → 对勾应用。取消不会改变当前引擎，已完成下载可复用。已就绪缓存再次进入设置时直接本地加载，切换下载源也不重新下载；缓存加载失败先报错，点击重试才检查并修复缓存。
 
-本机已检查的 Tesseract 发行版实际依赖 **27 个运行文件（1 个 EXE、26 个 DLL）**，合计 121,408,797 字节，约 116 MiB，尚未计入中文模型。版本不同，DLL 名称和体积也可能变化，脚本按实际依赖计算。中文模型仍约 2.4 MB，包体增加主要来自引擎与 DLL。只包含这批运行文件和中文模型的临时 ZIP 样例约 39 MB（不含应用及文档），正式包体积以发版结果为准。`ocr/runtime.json` 记录版本输出、每个运行文件的 SHA-256 和系统库列表。
+- Windows OCR：检测系统简体中文 OCR，无需下载附带模型。未安装时可点击语言设置按钮，从系统的简体中文语言选项安装“光学字符识别”，然后重试。系统安装可能需要管理员权限。
+- PP-OCRv6 tiny：约 4.46 MB ONNX 模型与约 17 MB 推理组件下载，解压体积另计。模型默认走 `hf-mirror.com`，可选择 HF 官方优先，失败时尝试另一源；ONNX Runtime 从 Microsoft 官方 NuGet 下载固定 1.22.0 DirectML 包，仅使用其中的 x64 原生 DLL 和 CPU 推理，不下载 DirectML 的独立 GPU 组件。CPU 路径不启用 DirectML provider。
 
-许可材料保留来源运行目录的 `doc/`、`licenses/`、`share/licenses/` 及顶层许可／署名文件，并提供依赖项目来源索引。DLL 各自拥有许可，模型的 Apache 许可不能替代它们；发布者应使用含完整许可材料的运行目录。脚本不将未知 DLL 默认为 Windows 系统库。
+模型核对固定 SHA-256；组件通过官方 HTTPS 源下载后记录 DLL 哈希，后续准备时复核。组件哈希是本机首次下载记录，并非仓库预置发布者签名。缓存位置为 `%LOCALAPPDATA%\PokeMMOHint\ocr\ppocrv6-tiny-9ef676d6\`。实际加载和一次空白图片推理、输出字表检查通过后才启用。若系统缺少 Microsoft VC++ x64 运行库，组件加载时会明确报错；基础 Windows OCR 不依赖这份额外运行库。
 
-## 发布前 Windows 验收
+## Windows 验收
 
-脚本已包含单元测试和包完整性检查，仍应在实际 Windows 环境验收一次：在没有安装 Tesseract、Rust 的电脑上解压到新目录，断网且不启动 PokeMMO，双击启动；使用模拟器或图鉴页面添加、命名、拖动调整选区；开始／暂停；按钮悬停文字和弱点卡片；重启恢复配置。可用未安装 Rust 的电脑确认用户流程。
+分别测试 Windows 中文 OCR、PP-OCR 的首次下载、HF 镜像与官方源切换、取消／重试、断网复用缓存、重启记住引擎。验证刷新率四档保存、旧配置恢复默认每秒 1 次、开始成功自动最小化、失败保留窗口、后台识别不触发启动忙碌光标，以及猫鼬斩、喵喵、No.573、多选区独立标签、悬停完整卡片以及最小化后的持续识别。未识别、编号冲突或引擎失败时应清除旧提示。PP 字表仍缺少 6 个物种名字的部分字，不能保证完整名字覆盖。
 
-校验下载包：
+发版脚本验证包的构建和完整性，不将操作系统语言功能、联网下载或 OCR 准确率混作无需环境的自检。当前开发环境只能执行 Rust 测试和 Windows 适配层静态检查，无法启动 Windows PowerShell（WSL interop 不可用）；MSVC 链接、首次联网准备与真实 Windows OCR 尚需在 Windows 执行，不提供旧 EXE 冒充新版。
 
-```powershell
-Get-FileHash .\dist\PokeMMO-Hint-v0.5.1-windows-x64.zip -Algorithm SHA256
-Get-Content .\dist\PokeMMO-Hint-v0.5.1-windows-x64.zip.sha256
-```
+## Git 忽略
 
-将 ZIP 和 `.sha256` 上传到对应版本的 Release，说明支持 Windows x64、内置 OCR 引擎且离线免安装、覆盖基础形态 1–649。源码是否公开与二进制发包分别决定；脚本不会自动上传、提交或推送。
-
-## Git
-
-`.gitignore` 已排除 `target/`、`dist/`、本地 OCR 引擎／模型、ROM、截图和配置。需要提交 `Cargo.lock`、PNG／ICO、`release/` 模板、模型固定哈希、许可证和脚本。
-
-如果某个产物以前已经被 Git 跟踪，添加忽略规则不会自动取消跟踪；应针对实际已跟踪的产物移出索引，再保留本地文件。本次环境未连接可用的 Git 索引，没有修改任何 Git 提交或索引。
-
-## 当前验证边界
-
-本环境的 WSL 无法启动 Windows PowerShell（`UtilBindVsockAnyPort` 错误）。Rust 测试、Windows 适配层静态检查可在这里执行；脚本源码已检查，但真实 PowerShell 运行、MSVC 链接、包内 Windows OCR 执行和最终 ZIP 仍需在发布者 Windows 上执行。不提供以旧 EXE 冒充的新包。
+保留源码、Cargo.lock、事实数据、字表、PNG／ICO 与许可／验证材料。忽略 target、dist、EXE、DLL、ONNX／traineddata、下载临时文件、配置、截图、ROM 和编辑器文件。既有已跟踪产物不会因忽略规则自动取消跟踪。

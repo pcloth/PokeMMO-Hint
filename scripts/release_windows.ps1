@@ -1,8 +1,7 @@
-# Build and package the portable Windows x64 release. PowerShell 5.1+.
+# Build a small Windows x64 release. OCR assets download on demand, never bundled.
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = '',
-    [string]$TesseractDirectory = '',
     [switch]$Force
 )
 Set-StrictMode -Version Latest
@@ -14,10 +13,6 @@ $stage = $null
 $tempZip = $null
 $oldFlags = $env:RUSTFLAGS
 $oldEncodedFlags = $env:CARGO_ENCODED_RUSTFLAGS
-$oldOcrEngine = $env:POKEMMO_TESSERACT
-$oldOcrModels = $env:POKEMMO_TESSDATA
-$oldPath = $env:PATH
-. (Join-Path $PSScriptRoot 'ocr_runtime.ps1')
 
 function Invoke-Checked {
     param([string]$Program, [string[]]$Arguments)
@@ -108,51 +103,7 @@ try {
         throw 'This version already exists. Bump Cargo.toml or pass -Force to replace it.'
     }
 
-    # The committed hash fixes the exact model shipped, even when the URL changes.
-    $expectedHash = ((Get-Content -LiteralPath (Join-Path $projectDir 'release\model.sha256') -Raw).Trim() -split '\s+')[0]
-    $model = Join-Path $projectDir 'ocr\tessdata\chi_sim.traineddata'
-    if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $model) | Out-Null
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $download = "$model.download"
-        try {
-            Write-Host 'Downloading the Chinese OCR model...'
-            Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata' -OutFile $download
-            if ((Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash -ne $expectedHash) { throw 'Downloaded model checksum does not match release/model.sha256.' }
-            Move-Item -LiteralPath $download -Destination $model
-        } finally {
-            if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download }
-        }
-    }
-    if ((Get-FileHash -LiteralPath $model -Algorithm SHA256).Hash -ne $expectedHash) {
-        throw 'Local model differs from release/model.sha256. Move it aside and rerun to fetch the pinned tessdata_fast model.'
-    }
-
-    if (-not $TesseractDirectory) {
-        $candidates = @((Join-Path $projectDir 'ocr'))
-        if ($env:POKEMMO_TESSERACT) { $candidates += (Split-Path -Parent $env:POKEMMO_TESSERACT) }
-        foreach ($key in @('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA')) {
-            $folder = [Environment]::GetEnvironmentVariable($key)
-            if ($folder) {
-                $candidates += (Join-Path $folder 'Tesseract-OCR')
-                $candidates += (Join-Path $folder 'Programs\Tesseract-OCR')
-            }
-        }
-        $command = Get-Command tesseract.exe -ErrorAction SilentlyContinue
-        if ($command) { $candidates += (Split-Path -Parent $command.Source) }
-        foreach ($candidate in $candidates) {
-            if (Test-Path -LiteralPath (Join-Path $candidate 'tesseract.exe') -PathType Leaf) { $TesseractDirectory = $candidate; break }
-        }
-    }
-    if (-not $TesseractDirectory) { throw 'No Tesseract runtime found. Run windows-ocr/setup.ps1 -InstallOcr -NoLaunch or specify -TesseractDirectory.' }
-    $runtime = Get-OcrRuntime -Directory $TesseractDirectory
-    $TesseractDirectory = (Resolve-Path -LiteralPath $TesseractDirectory).Path
-    $engine = Join-Path $TesseractDirectory 'tesseract.exe'
-    $engineVersion = @(& $engine --version 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw 'Source Tesseract runtime could not run.' }
-    Write-Host ("Bundling OCR runtime: {0} files" -f $runtime.Files.Count)
-
-    # Static MSVC CRT: recipients do not need Rust or a separate VC++ runtime install.
+    # Static CRT for the base EXE. Optional ONNX Runtime reports its own prerequisites.
     $env:RUSTFLAGS = "$oldFlags -C target-feature=+crt-static".Trim()
     $env:CARGO_ENCODED_RUSTFLAGS = $null
     Push-Location $projectDir
@@ -167,46 +118,19 @@ try {
 
     $stage = Join-Path $outputDir ('.staging-' + [guid]::NewGuid().ToString('N'))
     $package = Join-Path $stage $packageName
-    New-Item -ItemType Directory -Path (Join-Path $package 'ocr\tessdata') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $package 'licenses') -Force | Out-Null
     Copy-Item -LiteralPath $application -Destination (Join-Path $package 'pokemmo-hint.exe')
-    Copy-Item -LiteralPath $model -Destination (Join-Path $package 'ocr\tessdata\chi_sim.traineddata')
     foreach ($name in @('README.txt')) {
         Write-Utf8 -Path (Join-Path $package $name) -Text (Get-Content -LiteralPath (Join-Path $projectDir "release\$name") -Raw -Encoding UTF8) -Bom
     }
-    $ocrDir = Join-Path $package 'ocr'
-    $runtimeFiles = foreach ($path in $runtime.Files) {
-        $name = Split-Path -Leaf $path
-        Copy-Item -LiteralPath $path -Destination (Join-Path $ocrDir $name)
-        [ordered]@{ file = $name; sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
-    }
-    $runtimeLicenseDir = Join-Path $package 'licenses\tesseract-runtime'
-    New-Item -ItemType Directory -Force -Path $runtimeLicenseDir | Out-Null
-    foreach ($relative in @('doc', 'licenses', 'share\licenses')) {
-        $runtimeDoc = Join-Path $TesseractDirectory $relative
-        if (Test-Path -LiteralPath $runtimeDoc -PathType Container) { Copy-Item -LiteralPath $runtimeDoc -Destination $runtimeLicenseDir -Recurse }
-    }
-    foreach ($file in @(Get-ChildItem -LiteralPath $TesseractDirectory -File | Where-Object { $_.Name -match '(?i)^(license|copying|notice|authors)(\.|$)' })) {
-        Copy-Item -LiteralPath $file.FullName -Destination $runtimeLicenseDir
-    }
-    if (-not @(Get-ChildItem -LiteralPath $runtimeLicenseDir -Recurse -File | Where-Object { $_.Name -match '(?i)^(license|copying)' }).Count) {
-        throw 'OCR runtime license materials are missing. Supply a distribution containing its license/doc files.'
-    }
-    Write-Utf8 (Join-Path $ocrDir 'runtime.json') ([ordered]@{
-        version_output = @($engineVersion | ForEach-Object { "$_" }); files = @($runtimeFiles)
-        system_libraries = $runtime.SystemLibraries
-        upstream = 'https://github.com/UB-Mannheim/tesseract/wiki'
-        source = 'https://github.com/UB-Mannheim/tesseract'
-    } | ConvertTo-Json -Depth 6)
-    Copy-Item -LiteralPath (Join-Path $projectDir 'licenses\ocr-components.json') -Destination (Join-Path $package 'licenses')
     Copy-Item -LiteralPath (Join-Path $projectDir 'THIRD_PARTY_NOTICES.txt') -Destination $package
-    Copy-Item -LiteralPath (Join-Path $projectDir 'licenses\tessdata-fast-LICENSE.txt') -Destination (Join-Path $package 'licenses')
+    Copy-Item -LiteralPath (Join-Path $projectDir 'licenses\paddle-LICENSE.txt') -Destination (Join-Path $package 'licenses')
     $metadata = [ordered]@{
         name = 'PokeMMO Hint'; version = $version; target = $target
         built_at_utc = [DateTime]::UtcNow.ToString('o')
-        package = 'portable'; engine_bundled = $true
-        engine = 'ocr/tesseract.exe'; runtime_files = $runtime.Files.Count
-        model = 'chi_sim.traineddata'; model_sha256 = $expectedHash.ToLowerInvariant()
+        package = 'portable'; engine_bundled = $false; model_bundled = $false
+        default_engine = 'Windows.Media.Ocr'; optional_engine = 'PP-OCRv6 tiny ONNX'
+        model_sha256 = '9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6'
         static_crt = $true; species = '1-649 base forms'; configuration_included = $false
         coordinate_mode = 'screen'; target_process_required = $false; type_chart = 'generations 2-5'
         windows_subsystem = 'gui'; launch = 'pokemmo-hint.exe'
@@ -232,30 +156,6 @@ try {
             throw "Archive verification failed: $relative"
         }
     }
-    $unpackedOcr = Join-Path $unpacked 'ocr'
-    $packedRuntime = Get-OcrRuntime -Directory $unpackedOcr
-    if ($packedRuntime.Files.Count -ne $runtime.Files.Count) { throw 'Packaged OCR dependency count changed.' }
-    $env:POKEMMO_TESSERACT = Join-Path $unpackedOcr 'tesseract.exe'
-    $env:POKEMMO_TESSDATA = Join-Path $unpackedOcr 'tessdata'
-    # Exclude the developer's engine directory and PATH DLLs during all portable checks.
-    $env:PATH = "$unpackedOcr;$env:SystemRoot\System32;$env:SystemRoot"
-    Invoke-Checked -Program $env:POKEMMO_TESSERACT -Arguments @('--version')
-    Invoke-Checked -Program $env:POKEMMO_TESSERACT -Arguments @('--tessdata-dir', $env:POKEMMO_TESSDATA, '--list-langs')
-    $smokeImage = Join-Path $stage 'ocr-smoke.bmp'
-    Add-Type -AssemblyName System.Drawing
-    $bitmap = [Drawing.Bitmap]::new(480, 120)
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $font = [Drawing.Font]::new('Arial', [single]48, [Drawing.FontStyle]::Bold)
-    try {
-        $graphics.Clear([Drawing.Color]::White)
-        $graphics.DrawString('No.573', $font, [Drawing.Brushes]::Black, 8, 12)
-        $bitmap.Save($smokeImage, [Drawing.Imaging.ImageFormat]::Bmp)
-    } finally { $font.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
-    # This actually runs the packaged OCR engine/model through the packaged application.
-    $smokeOutput = Invoke-AppCheck -Program (Join-Path $unpacked 'pokemmo-hint.exe') -Arguments @('--image', $smokeImage)
-    if ($smokeOutput -notmatch '(?m)^#573\s') {
-        throw ("Packaged OCR smoke test did not recognize No.573: " + $smokeOutput)
-    }
     Assert-X64Gui (Join-Path $unpacked 'pokemmo-hint.exe')
     $null = Invoke-AppCheck -Program (Join-Path $unpacked 'pokemmo-hint.exe') -Arguments @('--text', 'No.573')
     Move-Item -LiteralPath $tempZip -Destination $zip -Force:$Force
@@ -270,9 +170,6 @@ try {
 } finally {
     $env:RUSTFLAGS = $oldFlags
     $env:CARGO_ENCODED_RUSTFLAGS = $oldEncodedFlags
-    $env:POKEMMO_TESSERACT = $oldOcrEngine
-    $env:POKEMMO_TESSDATA = $oldOcrModels
-    $env:PATH = $oldPath
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
     if ($tempZip -and (Test-Path -LiteralPath $tempZip)) { Remove-Item -LiteralPath $tempZip -Force }
 }

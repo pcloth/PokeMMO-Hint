@@ -1,5 +1,8 @@
+pub mod commandline;
 use std::fmt;
 pub mod bitmap;
+pub mod engines;
+pub mod model;
 pub mod regions;
 
 pub const TYPE_KEYS: [&str; 17] = [
@@ -45,6 +48,7 @@ pub struct HintCard {
     pub name: String,
     pub types: Vec<usize>,
     pub weaknesses: Vec<TypeEffect>,
+    pub neutral: Vec<TypeEffect>,
     pub resistances: Vec<TypeEffect>,
     pub immunities: Vec<TypeEffect>,
 }
@@ -55,6 +59,7 @@ pub fn hint_card(species: &Species) -> HintCard {
         name: species.name.clone(),
         types: species.types.clone(),
         weaknesses: vec![],
+        neutral: vec![],
         resistances: vec![],
         immunities: vec![],
     };
@@ -70,6 +75,8 @@ pub fn hint_card(species: &Species) -> HintCard {
             card.immunities.push(effect);
         } else if multiplier < 1.0 {
             card.resistances.push(effect);
+        } else {
+            card.neutral.push(effect);
         }
     }
     card.weaknesses
@@ -179,7 +186,7 @@ pub fn incoming_multiplier(attack: usize, species: &Species) -> f64 {
 }
 
 pub fn hint(species: &Species) -> String {
-    let mut groups: Vec<Vec<&str>> = vec![vec![]; 5];
+    let mut groups: Vec<Vec<&str>> = vec![vec![]; 6];
     for (attack, name) in TYPE_NAMES.iter().enumerate() {
         let value = incoming_multiplier(attack, species);
         let group = if value == 4.0 {
@@ -193,7 +200,7 @@ pub fn hint(species: &Species) -> String {
         } else if value == 0.0 {
             Some(4)
         } else {
-            None
+            Some(5)
         };
         if let Some(i) = group {
             groups[i].push(name);
@@ -222,6 +229,14 @@ pub fn hint(species: &Species) -> String {
             "无".to_owned()
         } else {
             weak.join("；")
+        }
+    ));
+    lines.push(format!(
+        "普通伤害（1倍）  {}",
+        if groups[5].is_empty() {
+            "无".to_owned()
+        } else {
+            groups[5].join("、")
         }
     ));
     let mut resist = Vec::new();
@@ -762,6 +777,36 @@ mod tests {
             .result,
             MatchResult::Conflict
         );
+    }
+    #[test]
+    fn neutral_damage_matches_serperior_and_all_types_are_present_once() {
+        let card = hint_card(&species(497));
+        assert_eq!(
+            card.neutral
+                .iter()
+                .map(|effect| TYPE_NAMES[effect.type_id])
+                .collect::<Vec<_>>(),
+            vec!["普通", "格斗", "岩石", "幽灵", "钢", "超能力", "龙", "恶"]
+        );
+        assert!(hint(&species(497))
+            .contains("普通伤害（1倍）  普通、格斗、岩石、幽灵、钢、超能力、龙、恶"));
+        for pokemon in species_data() {
+            let card = hint_card(&pokemon);
+            let mut seen = [false; 17];
+            for group in [
+                &card.weaknesses,
+                &card.neutral,
+                &card.resistances,
+                &card.immunities,
+            ] {
+                for effect in group {
+                    assert!(!seen[effect.type_id], "{}", pokemon.name);
+                    seen[effect.type_id] = true;
+                }
+            }
+            assert!(seen.into_iter().all(|seen| seen), "{}", pokemon.name);
+            assert!(card.neutral.iter().all(|effect| effect.multiplier == 1.0));
+        }
     }
     #[test]
     fn card_separates_type_effects_and_omits_old_caption() {

@@ -12,8 +12,6 @@ pub fn binary_bitmap(pixels: &[u8], width: i32, height: i32) -> Vec<u8> {
 fn make_bitmap(pixels: &[u8], width: i32, height: i32, binary: bool) -> Vec<u8> {
     assert!(width > 0 && height > 0 && width <= 2000 && height <= 1000);
     assert_eq!(pixels.len(), width as usize * height as usize * 4);
-    const SCALE: usize = 4;
-    const BORDER: usize = 12;
     let (iw, ih) = (width as usize, height as usize);
     let gray: Vec<u8> = pixels
         .chunks_exact(4)
@@ -36,7 +34,36 @@ fn make_bitmap(pixels: &[u8], width: i32, height: i32, binary: bool) -> Vec<u8> 
         .into_iter()
         .map(|g| if invert { 255 - g } else { g })
         .collect();
-    let threshold = otsu(&gray);
+    render_gray(&gray, iw, ih, binary)
+}
+
+/// Isolate bright, nearly neutral white strokes and discard coloured scenery/shadows.
+/// Skip bright panels, where white is the background rather than the text.
+pub fn white_text_bitmap(pixels: &[u8], width: i32, height: i32) -> Option<Vec<u8>> {
+    assert!(width > 0 && height > 0 && width <= 2000 && height <= 1000);
+    assert_eq!(pixels.len(), width as usize * height as usize * 4);
+    let gray: Vec<u8> = pixels
+        .chunks_exact(4)
+        .map(|p| {
+            let low = p[0].min(p[1]).min(p[2]);
+            let high = p[0].max(p[1]).max(p[2]);
+            if low >= 190 && high - low <= 55 {
+                0
+            } else {
+                255
+            }
+        })
+        .collect();
+    let foreground = gray.iter().filter(|&&v| v == 0).count();
+    if foreground < 8 || foreground * 5 >= gray.len() * 2 {
+        return None;
+    }
+    Some(render_gray(&gray, width as usize, height as usize, false))
+}
+fn render_gray(gray: &[u8], iw: usize, ih: usize, binary: bool) -> Vec<u8> {
+    const SCALE: usize = 4;
+    const BORDER: usize = 12;
+    let threshold = if binary { otsu(gray) } else { 128 };
     let (w, h) = (iw * SCALE + BORDER * 2, ih * SCALE + BORDER * 2);
     let size = 54 + w * h * 4;
     let mut out = vec![255u8; size];
@@ -120,6 +147,26 @@ mod tests {
         assert_eq!(pixel(&b, 0, 0), 255);
         assert!(pixel(&b, 22, 22) < 100);
         assert!(b[54..].chunks_exact(4).any(|p| p[0] > 0 && p[0] < 255));
+    }
+    #[test]
+    fn white_pass_rejects_coloured_scenery_and_preserves_text() {
+        let mut p = vec![0; 20 * 12 * 4];
+        for px in p.chunks_exact_mut(4) {
+            px.copy_from_slice(&[180, 90, 30, 255]);
+        }
+        for y in 3..9 {
+            for x in 5..8 {
+                p[(y * 20 + x) * 4..(y * 20 + x) * 4 + 3].fill(245);
+            }
+        }
+        // Bright yellow is not white text.
+        p[(5 * 20 + 15) * 4..(5 * 20 + 15) * 4 + 3].copy_from_slice(&[40, 245, 245]);
+        let bmp = white_text_bitmap(&p, 20, 12).unwrap();
+        assert!(pixel(&bmp, 12 + 6 * 4, 12 + 5 * 4) < 20);
+        assert!(pixel(&bmp, 12 + 15 * 4, 12 + 5 * 4) > 240);
+        assert_eq!(pixel(&bmp, 0, 0), 255);
+        assert!(white_text_bitmap(&vec![255; 20 * 12 * 4], 20, 12).is_none());
+        assert!(white_text_bitmap(&vec![0; 20 * 12 * 4], 20, 12).is_none());
     }
     #[test]
     fn dark_text_on_light_background_stays_dark() {
