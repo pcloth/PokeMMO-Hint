@@ -1,0 +1,169 @@
+{
+  "scope": "Source and notice references for DLL names in the locally inspected UB Mannheim runtime. Actual version/files/hashes are in ocr/runtime.json. These links do not replace individual component license texts.",
+  "components": [
+    {
+      "dlls": [
+        "libtesseract-5.dll"
+      ],
+      "project": "Tesseract",
+      "upstream": "https://github.com/tesseract-ocr/tesseract"
+    },
+    {
+      "dlls": [
+        "libleptonica-6.dll"
+      ],
+      "project": "Leptonica",
+      "upstream": "https://github.com/DanBloomberg/leptonica"
+    },
+    {
+      "dlls": [
+        "libarchive-13.dll"
+      ],
+      "project": "libarchive",
+      "upstream": "https://github.com/libarchive/libarchive"
+    },
+    {
+      "dlls": [
+        "libLerc.dll"
+      ],
+      "project": "Lerc",
+      "upstream": "https://github.com/Esri/lerc"
+    },
+    {
+      "dlls": [
+        "libb2-1.dll"
+      ],
+      "project": "libb2",
+      "upstream": "https://github.com/BLAKE2/libb2"
+    },
+    {
+      "dlls": [
+        "libbz2-1.dll"
+      ],
+      "project": "bzip2",
+      "upstream": "https://sourceware.org/bzip2/"
+    },
+    {
+      "dlls": [
+        "libcrypto-3-x64.dll"
+      ],
+      "project": "OpenSSL",
+      "upstream": "https://github.com/openssl/openssl"
+    },
+    {
+      "dlls": [
+        "libdeflate.dll"
+      ],
+      "project": "libdeflate",
+      "upstream": "https://github.com/ebiggers/libdeflate"
+    },
+    {
+      "dlls": [
+        "libexpat-1.dll"
+      ],
+      "project": "Expat",
+      "upstream": "https://github.com/libexpat/libexpat"
+    },
+    {
+      "dlls": [
+        "libgcc_s_seh-1.dll",
+        "libstdc++-6.dll"
+      ],
+      "project": "GCC runtime",
+      "upstream": "https://gcc.gnu.org/"
+    },
+    {
+      "dlls": [
+        "libgif-7.dll"
+      ],
+      "project": "giflib",
+      "upstream": "https://sourceforge.net/projects/giflib/"
+    },
+    {
+      "dlls": [
+        "libiconv-2.dll"
+      ],
+      "project": "GNU libiconv",
+      "upstream": "https://www.gnu.org/software/libiconv/"
+    },
+    {
+      "dlls": [
+        "libjbig-0.dll"
+      ],
+      "project": "JBIG-KIT",
+      "upstream": "https://www.cl.cam.ac.uk/~mgk25/jbigkit/"
+    },
+    {
+      "dlls": [
+        "libjpeg-8.dll"
+      ],
+      "project": "libjpeg-turbo",
+      "upstream": "https://github.com/libjpeg-turbo/libjpeg-turbo"
+    },
+    {
+      "dlls": [
+        "liblz4.dll"
+      ],
+      "project": "LZ4",
+      "upstream": "https://github.com/lz4/lz4"
+    },
+    {
+      "dlls": [
+        "liblzma-5.dll"
+      ],
+      "project": "XZ Utils",
+      "upstream": "https://tukaani.org/xz/"
+    },
+    {
+      "dlls": [
+        "libopenjp2-7.dll"
+      ],
+      "project": "OpenJPEG",
+      "upstream": "https://github.com/uclouvain/openjpeg"
+    },
+    {
+      "dlls": [
+        "libpng16-16.dll"
+      ],
+      "project": "libpng",
+      "upstream": "https://www.libpng.org/pub/png/libpng.html"
+    },
+    {
+      "dlls": [
+        "libsharpyuv-0.dll",
+        "libwebp-7.dll",
+        "libwebpmux-3.dll"
+      ],
+      "project": "WebP",
+      "upstream": "https://chromium.googlesource.com/webm/libwebp/"
+    },
+    {
+      "dlls": [
+        "libtiff-6.dll"
+      ],
+      "project": "LibTIFF",
+      "upstream": "https://libtiff.gitlab.io/libtiff/"
+    },
+    {
+      "dlls": [
+        "libwinpthread-1.dll"
+      ],
+      "project": "mingw-w64 winpthreads",
+      "upstream": "https://www.mingw-w64.org/"
+    },
+    {
+      "dlls": [
+        "libzstd.dll"
+      ],
+      "project": "Zstandard",
+      "upstream": "https://github.com/facebook/zstd"
+    },
+    {
+      "dlls": [
+        "zlib1.dll"
+      ],
+      "project": "zlib",
+      "upstream": "https://zlib.net/"
+    }
+  ]
+}

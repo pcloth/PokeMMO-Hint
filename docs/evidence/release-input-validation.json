@@ -1,11 +1,12 @@
 {
-  "scope": "Local input/ignore checks, not PowerShell execution or final release packaging",
-  "gitignore_ignored": 8,
-  "gitignore_kept": 8,
+  "scope": "Portable release input checks, not Windows PowerShell execution or final release packaging",
+  "package": "portable",
   "model_sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
-  "license": "Apache 2.0 full text present",
-  "release_inputs": "present",
-  "powershell": "ASCII and delimiter sanity checks only; Windows execution unavailable",
-  "legacy_mod_files": "removed",
+  "runtime_files_observed": 27,
+  "runtime_dlls_observed": 26,
+  "runtime_audit": "portable-ocr-runtime.json",
+  "smoke_fixture": "Linux Tesseract C API with Windows Arial Bold and packaged chi_sim model read No.573 correctly; Windows System.Drawing/engine test awaits actual script execution",
+  "startup": "CMD only; no installer, winget or PowerShell",
+  "powershell": "ASCII and delimiter checks only; Windows execution unavailable",
   "result": "passed"
 }

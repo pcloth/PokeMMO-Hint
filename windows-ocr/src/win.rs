@@ -139,17 +139,11 @@ extern "system" {
     fn SetWindowTextW(hwnd: Handle, text: *const u16) -> i32;
     fn GetWindowTextW(hwnd: Handle, text: *mut u16, max: i32) -> i32;
     fn SendMessageW(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize;
-    fn EnumWindows(
-        callback: Option<unsafe extern "system" fn(Handle, isize) -> i32>,
-        data: isize,
-    ) -> i32;
     fn IsWindowVisible(hwnd: Handle) -> i32;
     fn IsIconic(hwnd: Handle) -> i32;
     fn IsWindow(hwnd: Handle) -> i32;
-    fn GetWindowThreadProcessId(hwnd: Handle, pid: *mut u32) -> u32;
     fn GetClientRect(hwnd: Handle, rect: *mut Rect) -> i32;
     fn GetWindowRect(hwnd: Handle, rect: *mut Rect) -> i32;
-    fn ClientToScreen(hwnd: Handle, point: *mut Point) -> i32;
     fn ScreenToClient(hwnd: Handle, point: *mut Point) -> i32;
     fn GetForegroundWindow() -> Handle;
     fn SetWindowPos(hwnd: Handle, after: Handle, x: i32, y: i32, w: i32, h: i32, flags: u32)
@@ -192,14 +186,7 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(name: *const u16) -> Handle;
-    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
-    fn QueryFullProcessImageNameW(
-        process: Handle,
-        flags: u32,
-        name: *mut u16,
-        size: *mut u32,
-    ) -> i32;
-    fn CloseHandle(handle: Handle) -> i32;
+
 }
 #[link(name = "gdi32")]
 extern "system" {
@@ -281,57 +268,16 @@ unsafe fn get_text(hwnd: Handle) -> String {
     String::from_utf16_lossy(&b[..n.max(0) as usize])
 }
 
-unsafe extern "system" fn find_game(hwnd: Handle, data: isize) -> i32 {
-    if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
-        return 1;
-    }
-    let mut pid = 0;
-    GetWindowThreadProcessId(hwnd, &mut pid);
-    let process = OpenProcess(0x1000, 0, pid); // QUERY_LIMITED_INFORMATION, no memory permissions
-    if process == 0 {
-        return 1;
-    }
-    let mut path = [0u16; 4096];
-    let mut n = path.len() as u32;
-    let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut n);
-    CloseHandle(process);
-    if ok != 0
-        && String::from_utf16_lossy(&path[..n as usize])
-            .to_lowercase()
-            .ends_with("\\pokemmo.exe")
-    {
-        *(data as *mut Handle) = hwnd;
-        return 0;
-    }
-    1
-}
-unsafe fn game_window() -> Result<Handle, String> {
-    let mut hwnd = 0;
-    EnumWindows(Some(find_game), &mut hwnd as *mut _ as isize);
-    if hwnd == 0 {
-        Err("未找到可见的 PokeMMO 游戏窗口，请先打开游戏".to_owned())
-    } else {
-        Ok(hwnd)
+unsafe fn desktop_bounds() -> Bounds {
+    Bounds {
+        x: GetSystemMetrics(76),
+        y: GetSystemMetrics(77),
+        width: GetSystemMetrics(78),
+        height: GetSystemMetrics(79),
     }
 }
-unsafe fn client_size(hwnd: Handle) -> Result<(i32, i32), String> {
-    let mut r = Rect::default();
-    if GetClientRect(hwnd, &mut r) == 0 {
-        return Err("无法取得游戏尺寸".to_owned());
-    }
-    Ok((r.right - r.left, r.bottom - r.top))
-}
-unsafe fn screen_rect(hwnd: Handle, roi: Roi) -> Result<Rect, String> {
-    let mut p = Point { x: roi.x, y: roi.y };
-    if ClientToScreen(hwnd, &mut p) == 0 {
-        return Err("游戏窗口已失效".to_owned());
-    }
-    Ok(Rect {
-        left: p.x,
-        top: p.y,
-        right: p.x + roi.width,
-        bottom: p.y + roi.height,
-    })
+unsafe fn screen_rect(selected: Selection) -> Result<Rect, String> {
+    selected.screen_bounds(desktop_bounds()).map(overlay::rect)
 }
 fn intersects(a: Rect, b: Rect) -> bool {
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
@@ -488,9 +434,6 @@ impl App {
             return Err(format!("最多支持 {MAX_REGIONS} 个选区"));
         }
         let config = OcrConfig::discover()?;
-        unsafe {
-            game_window()?;
-        }
         for s in &self.settings.selections {
             s.roi.validate(s.width, s.height)?;
         }
@@ -533,11 +476,7 @@ impl App {
     }
     fn sync_overlays(&mut self) {
         unsafe {
-            let game = game_window().ok();
-            let foreground = GetForegroundWindow();
-            let active = !self.workers.is_empty()
-                && game.is_some()
-                && (Some(foreground) == game || foreground == self.hwnd);
+            let active = !self.workers.is_empty();
             if !active {
                 for slot in &mut self.slots {
                     if let Some(tag) = &slot.tag {
@@ -553,8 +492,6 @@ impl App {
                 }
                 return;
             }
-            let game = game.unwrap();
-            let dimensions = client_size(game).ok();
             let mut visible = Vec::new();
             let mut obstacles = Vec::new();
             let mut expired = false;
@@ -565,11 +502,7 @@ impl App {
                 if slot.updated.elapsed() > Duration::from_secs(15) && slot.last.take().is_some() {
                     expired = true;
                 }
-                let region = if dimensions == Some((selection.width, selection.height)) {
-                    screen_rect(game, selection.roi).ok()
-                } else {
-                    None
-                };
+                let region = screen_rect(*selection).ok();
                 if let Some(r) = region {
                     obstacles.push(overlay::bounds(r));
                 }
@@ -792,9 +725,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         .selections
                         .iter()
                         .enumerate()
-                        .filter(|(i, s)| {
-                            *i != index && (s.width, s.height) == (selected.width, selected.height)
-                        })
+                        .filter(|(i, s)| *i != index && s.desktop() == selected.desktop())
                         .map(|(_, s)| s.roi)
                         .collect();
                     let resume = !app.workers.is_empty();
@@ -1318,8 +1249,8 @@ unsafe extern "system" fn select_proc(hwnd: Handle, msg: u32, w: usize, l: isize
     }
 }
 unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
-    let game = game_window()?;
-    let (width, height) = client_size(game)?;
+    let desktop = desktop_bounds();
+    let (width, height) = (desktop.width, desktop.height);
     ShowWindow(parent, 0);
     let origin = Point {
         x: GetSystemMetrics(76),
@@ -1369,21 +1300,22 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
     }
     ShowWindow(parent, 5);
     if let Some(r) = state.result {
-        let mut p = Point {
-            x: r.left,
-            y: r.top,
-        };
-        if ScreenToClient(game, &mut p) == 0 {
-            return Err("游戏窗口已失效".to_owned());
-        }
         let roi = Roi {
-            x: p.x,
-            y: p.y,
+            x: r.left - origin.x,
+            y: r.top - origin.y,
             width: r.right - r.left,
             height: r.bottom - r.top,
         }
         .validate(width, height)?;
-        return Ok(Some(Selection { roi, width, height }));
+        let selection = Selection {
+            roi,
+            width,
+            height,
+            origin_x: origin.x,
+            origin_y: origin.y,
+        };
+        selection.screen_bounds(desktop)?;
+        return Ok(Some(selection));
     }
     Ok(None)
 }
@@ -1394,8 +1326,8 @@ fn settings_directory() -> Option<PathBuf> {
 fn save_settings(settings: &RegionSettings) -> Result<(), String> {
     let directory = settings_directory().ok_or("无法取得本地配置目录")?;
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-    let path = directory.join("regions.txt");
-    let temporary = directory.join("regions.tmp");
+    let path = directory.join("screen-regions.txt");
+    let temporary = directory.join("screen-regions.tmp");
     std::fs::write(&temporary, settings.encode()).map_err(|e| e.to_string())?;
     std::fs::rename(temporary, path).map_err(|e| e.to_string())
 }
@@ -1406,11 +1338,28 @@ fn load_settings() -> (RegionSettings, Option<String>) {
             Some("无法取得本地配置目录".to_owned()),
         );
     };
-    let path = if directory.join("regions.txt").exists() {
-        directory.join("regions.txt")
-    } else {
-        directory.join("roi.txt")
-    };
+    let path = directory.join("screen-regions.txt");
+    if !path.exists() {
+        for legacy in ["regions.txt", "roi.txt"] {
+            let old = directory.join(legacy);
+            if old.exists() {
+                let window = std::fs::read_to_string(&old).ok().and_then(|text| {
+                    text.lines().find_map(|line| {
+                        let value = line.strip_prefix("window=")?;
+                        let (x, y) = value.split_once(',')?;
+                        Some((x.parse().ok()?, y.parse().ok()?))
+                    })
+                });
+                return (
+                    RegionSettings {
+                        window,
+                        ..RegionSettings::default()
+                    },
+                    Some("已切换为屏幕选区，请重新框选一次；旧配置文件保留。".to_owned()),
+                );
+            }
+        }
+    }
     match std::fs::read_to_string(path) {
         Ok(text) => match RegionSettings::parse(&text) {
             Ok(settings) => (settings, None),
@@ -1437,7 +1386,7 @@ unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
         || r.right > vx + GetSystemMetrics(78)
         || r.bottom > vy + GetSystemMetrics(79)
     {
-        return Err("识别区域超出屏幕，请把游戏移回屏幕内".to_owned());
+        return Err("识别区域超出屏幕，请重新框选".to_owned());
     }
     let source = GetDC(0);
     if source == 0 {
@@ -1575,15 +1524,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
             let mut deferred = false;
             let result = (|| -> Result<pokemmo_hint::ReadDecision, String> {
                 let pixels = unsafe {
-                    let game = game_window()?;
-                    if client_size(game)? != (selected.width, selected.height) {
-                        return Err("游戏尺寸改变，请暂停后重新框选。".to_owned());
-                    }
-                    let foreground = GetForegroundWindow();
-                    if foreground != game && foreground != own {
-                        return Err("游戏不在前台，识别已暂缓。".to_owned());
-                    }
-                    let region = screen_rect(game, selected.roi)?;
+                    let region = screen_rect(*selected)?;
                     let mut own_rect = Rect::default();
                     if IsIconic(own) == 0
                         && GetWindowRect(own, &mut own_rect) != 0

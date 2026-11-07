@@ -6,13 +6,17 @@ PokeMMO Hint - Third-party components
    License: Apache License 2.0; full text in licenses/tessdata-fast-LICENSE.txt.
    The model is distributed without modification. Its SHA-256 is recorded in release.json.
 
-2. Tesseract OCR engine
-   This lightweight release does NOT redistribute the engine or its DLL dependencies.
-   install-ocr.ps1 installs UB-Mannheim.TesseractOCR through the Windows package manager,
-   or uses an existing local installation. That separately installed distribution supplies
-   its own license materials and notices.
-   https://tesseract-ocr.github.io/tessdoc/Installation.html
-   https://github.com/UB-Mannheim/tesseract/wiki
+2. Tesseract OCR runtime
+   This portable release redistributes tesseract.exe and the transitive non-Windows DLL
+   dependencies from the publisher's x64 Tesseract distribution. No installer, training
+   utilities, unrelated DLLs or extra language models are included.
+   The distribution's supplied license, copyright and author files are preserved under
+   licenses/tesseract-runtime/. Engine version, file hashes and system-only dependencies
+   are recorded in ocr/runtime.json. These libraries are separate components with their
+   own licenses; the Apache model license does not replace their notices.
+   Tesseract: https://github.com/tesseract-ocr/tesseract
+   Windows build: https://github.com/UB-Mannheim/tesseract
+   Dependency source/notice reference: licenses/ocr-components.json
 
 3. Species facts
    The included table contains national numbers 1-649, Chinese species names and base

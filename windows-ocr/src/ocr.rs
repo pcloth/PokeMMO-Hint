@@ -18,11 +18,10 @@ impl OcrConfig {
             .unwrap()
             .to_path_buf();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let mut candidates = Vec::new();
+        let mut candidates = vec![base.join("ocr/tesseract.exe")];
         if let Some(path) = std::env::var_os("POKEMMO_TESSERACT") {
             candidates.push(PathBuf::from(path));
         }
-        candidates.push(base.join("ocr/tesseract.exe"));
         for key in ["ProgramFiles", "ProgramFiles(x86)"] {
             if let Some(path) = std::env::var_os(key) {
                 candidates.push(PathBuf::from(path).join("Tesseract-OCR/tesseract.exe"));
@@ -38,10 +37,10 @@ impl OcrConfig {
             }
         }
         let executable=candidates.into_iter().find(|p|p.is_file()).ok_or(
-            "未找到 Tesseract。发行包请运行 Start.cmd，源码版请运行 windows-ocr/setup.ps1 -InstallOcr；或设置 POKEMMO_TESSERACT 为 tesseract.exe 路径")?;
+            "未找到 Tesseract。发行包请完整解压并保留 ocr 文件夹，源码版请运行 windows-ocr/setup.ps1 -InstallOcr；或设置 POKEMMO_TESSERACT 为 tesseract.exe 路径")?;
         let model_dirs = [
-            std::env::var_os("POKEMMO_TESSDATA").map(PathBuf::from),
             Some(base.join("ocr/tessdata")),
+            std::env::var_os("POKEMMO_TESSDATA").map(PathBuf::from),
             Some(root.join("ocr/tessdata")),
             executable.parent().map(|p| p.join("tessdata")),
         ];

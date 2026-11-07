@@ -1,0 +1,158 @@
+{
+  "scope": "Independent objdump audit and runtime-only ZIP fixture, not Windows process execution or final application release",
+  "runtime_directory": "Local UB Mannheim Tesseract runtime",
+  "files": 27,
+  "dlls": 26,
+  "uncompressed_runtime_bytes": 121408797,
+  "compressed_fixture_bytes_including_model": 39028728,
+  "system_libraries": [
+    "advapi32.dll",
+    "bcrypt.dll",
+    "crypt32.dll",
+    "gdi32.dll",
+    "kernel32.dll",
+    "msvcrt.dll",
+    "user32.dll",
+    "ws2_32.dll"
+  ],
+  "closed_dependencies": true,
+  "round_trip_hashes": "passed",
+  "windows_execution": "not available in this environment",
+  "inventory": [
+    {
+      "name": "libarchive-13.dll",
+      "bytes": 769154,
+      "sha256": "98b9b7e9259f23eab6749ee25cca2c0643f09df6b23c58229fd43bf6249195e9"
+    },
+    {
+      "name": "libb2-1.dll",
+      "bytes": 34372,
+      "sha256": "7fb8418a1172042dab5227fcd466b1bf293737f5b5cf35359e851516227f109c"
+    },
+    {
+      "name": "libbz2-1.dll",
+      "bytes": 100964,
+      "sha256": "b79cd3a7102e359ef6324e98966a67939e58ec2b651ae2847cae84a4dfa453f7"
+    },
+    {
+      "name": "libcrypto-3-x64.dll",
+      "bytes": 5130880,
+      "sha256": "c0674a225d30f1642ca1da45ac040a9c1885d8f23883532b42987bae458edc4d"
+    },
+    {
+      "name": "libdeflate.dll",
+      "bytes": 91035,
+      "sha256": "b6ee7b31a23605d8e8b9be5eae782a3ddf7adf2b7ca2c8e0041bdfd4fe4659ee"
+    },
+    {
+      "name": "libexpat-1.dll",
+      "bytes": 188909,
+      "sha256": "d9ea333175b1e995bbe6a062567f38ff362f1b2f369fa8ebdb0eeed21813bdc6"
+    },
+    {
+      "name": "libgcc_s_seh-1.dll",
+      "bytes": 150707,
+      "sha256": "b22b954397a52703579d92db64b57812af70f2afcafe2e742a009c1640b9ec1a"
+    },
+    {
+      "name": "libgif-7.dll",
+      "bytes": 41367,
+      "sha256": "a1a179853ae6fad8eb045b8e9f12c55e6fc99929446b02fa345512354cf5e582"
+    },
+    {
+      "name": "libiconv-2.dll",
+      "bytes": 1118202,
+      "sha256": "967189adfbc889fde89aafc867f7a1f02731f8592cf6fd5a4ace1929213e2e13"
+    },
+    {
+      "name": "libjbig-0.dll",
+      "bytes": 62083,
+      "sha256": "275a827ba6839d47cfdbe059db1b1b403a92ff26e2b76a29362915487868bef2"
+    },
+    {
+      "name": "libjpeg-8.dll",
+      "bytes": 912746,
+      "sha256": "e44514c4e7753635e79bdb668f1e10315c1a93287f8d044ae74594ed57de619d"
+    },
+    {
+      "name": "libleptonica-6.dll",
+      "bytes": 2721006,
+      "sha256": "26861baff4d25446a03ed1f6064d2eae7435eddf51bb36af4e634c0eb4eb3af0"
+    },
+    {
+      "name": "libLerc.dll",
+      "bytes": 761261,
+      "sha256": "4ab688c7c5c4afdfee0f519f942759137067a7876a1c1bb825ee575b0a5760b1"
+    },
+    {
+      "name": "liblz4.dll",
+      "bytes": 147105,
+      "sha256": "1b64d6429ae4aacf9eb35b8158d98556859a5c5e8ee817e155da343e194dd8e3"
+    },
+    {
+      "name": "liblzma-5.dll",
+      "bytes": 184667,
+      "sha256": "3a599d97ea4dd002166ee7ffdc527c129d2cf8b05e9152ca7cae006c4187977e"
+    },
+    {
+      "name": "libopenjp2-7.dll",
+      "bytes": 462194,
+      "sha256": "5ff762ff6d672a06ee502819daf1494aa3aa3acf408805f0429303e026705011"
+    },
+    {
+      "name": "libpng16-16.dll",
+      "bytes": 247380,
+      "sha256": "f1b0a9d6cf3b8809c22fa0e27b5b82d9357e5bca43ab0ce8762f55fb303ed23f"
+    },
+    {
+      "name": "libsharpyuv-0.dll",
+      "bytes": 57852,
+      "sha256": "60bcc87ac64a834e967e9ec9461be37395dbc090c579f3e23497ef69a5d8323e"
+    },
+    {
+      "name": "libstdc++-6.dll",
+      "bytes": 2409896,
+      "sha256": "0d9c01ab1771df439c75f144b2d855b4ac400243f006d14d9a043493de628f0d"
+    },
+    {
+      "name": "libtesseract-5.dll",
+      "bytes": 101471336,
+      "sha256": "279488c41bd341edaa03dcd097faa33604ba330e6254ac97bcaf2229d8d7ac1a"
+    },
+    {
+      "name": "libtiff-6.dll",
+      "bytes": 576887,
+      "sha256": "e000306d3de299b05ebef443e48c1486d9fa291b0244f6ca6225843b75fdf581"
+    },
+    {
+      "name": "libwebp-7.dll",
+      "bytes": 743580,
+      "sha256": "687b8859e1f739dad5800fdc293a6ee1fd0dd4b33380ab283681a5a12eb3d4fa"
+    },
+    {
+      "name": "libwebpmux-3.dll",
+      "bytes": 78730,
+      "sha256": "ad10bacecd37b44c7c2c813da098a8bf6a42a3bf0152f7f33726d216815558f9"
+    },
+    {
+      "name": "libwinpthread-1.dll",
+      "bytes": 60798,
+      "sha256": "bbcbe5eb8e806f3537585d4c9832b4ee15f86617328a566695d7d3728aa370ee"
+    },
+    {
+      "name": "libzstd.dll",
+      "bytes": 1179848,
+      "sha256": "f216ea8efb5b3bb9ad3d938fb9ac07e3b8f78c2c92faab03d2c468d0b6798a5a"
+    },
+    {
+      "name": "tesseract.exe",
+      "bytes": 1585024,
+      "sha256": "babb405f4366b480d02cd8ff2bac8d497170f6c1711ce6f3d5d8bf0fb7fa6ed9"
+    },
+    {
+      "name": "zlib1.dll",
+      "bytes": 120814,
+      "sha256": "cb7ab3788d10940df874acd97b1821bbb5ee4a91f3eec11982bb5bf7a3c96443"
+    }
+  ]
+}

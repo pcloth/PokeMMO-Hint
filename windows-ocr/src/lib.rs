@@ -584,7 +584,7 @@ impl Roi {
             || self.x as i64 + self.width as i64 > width as i64
             || self.y as i64 + self.height as i64 > height as i64
         {
-            return Err("选择区域必须在游戏客户区内，且至少 8×8 像素".to_owned());
+            return Err("选择区域必须在屏幕范围内，且至少 8×8 像素".to_owned());
         }
         Ok(self)
     }

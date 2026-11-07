@@ -38,6 +38,8 @@ __pycache__/
 /uia-result*.jsonl
 regions.txt
 regions.tmp
+screen-regions.txt
+screen-regions.tmp
 roi.txt
 
 # Editor/OS/session files

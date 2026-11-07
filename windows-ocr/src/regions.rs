@@ -7,6 +7,40 @@ pub struct Selection {
     pub roi: Roi,
     pub width: i32,
     pub height: i32,
+    pub origin_x: i32,
+    pub origin_y: i32,
+}
+impl Selection {
+    pub fn desktop(self) -> Bounds {
+        Bounds {
+            x: self.origin_x,
+            y: self.origin_y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+    pub fn screen_bounds(self, desktop: Bounds) -> Result<Bounds, String> {
+        self.roi.validate(self.width, self.height)?;
+        if self.desktop() != desktop {
+            return Err("屏幕布局或分辨率改变，请重新框选该区域。".to_owned());
+        }
+        let x = self
+            .origin_x
+            .checked_add(self.roi.x)
+            .ok_or("屏幕坐标超出范围")?;
+        let y = self
+            .origin_y
+            .checked_add(self.roi.y)
+            .ok_or("屏幕坐标超出范围")?;
+        x.checked_add(self.roi.width).ok_or("屏幕坐标超出范围")?;
+        y.checked_add(self.roi.height).ok_or("屏幕坐标超出范围")?;
+        Ok(Bounds {
+            x,
+            y,
+            width: self.roi.width,
+            height: self.roi.height,
+        })
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -19,17 +53,9 @@ pub struct RegionSettings {
 impl RegionSettings {
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut result = Self::default();
-        // Upgrade the 0.1/0.2 single-region file without losing its coordinates.
-        if !text.contains('=') && !text.starts_with("pokemmo-regions-v") {
-            result.selections.push(parse_selection(text.trim())?);
-            return Ok(result);
-        }
         let mut lines = text.lines();
-        if !matches!(
-            lines.next(),
-            Some("pokemmo-regions-v1" | "pokemmo-regions-v2")
-        ) {
-            return Err("无法识别选区配置格式".to_owned());
+        if lines.next() != Some("pokemon-screen-regions-v1") {
+            return Err("选区不是屏幕坐标格式；旧版窗口选区需要重新框选。".to_owned());
         }
         for line in lines.filter(|l| !l.is_empty()) {
             let (key, value) = line.split_once('=').ok_or("选区配置格式错误")?;
@@ -67,12 +93,15 @@ impl RegionSettings {
         Ok(result)
     }
     pub fn encode(&self) -> String {
-        let mut text = format!("pokemmo-regions-v2\nselected={}\n", self.selected);
+        let mut text = format!("pokemon-screen-regions-v1\nselected={}\n", self.selected);
         if let Some((x, y)) = self.window {
             text.push_str(&format!("window={x},{y}\n"));
         }
         for (index, s) in self.selections.iter().enumerate() {
-            text.push_str(&format!("region={},{},{}\n", s.roi, s.width, s.height));
+            text.push_str(&format!(
+                "region={},{},{},{},{}\n",
+                s.roi, s.width, s.height, s.origin_x, s.origin_y
+            ));
             if let Some(name) = self.names.get(index).filter(|n| !n.is_empty()) {
                 text.push_str(&format!("name={index},{name}\n"));
             }
@@ -107,7 +136,7 @@ fn parse_selection(text: &str) -> Result<Selection, String> {
         .split(',')
         .map(|s| s.parse().map_err(|_| "选区坐标错误".to_owned()))
         .collect::<Result<_, _>>()?;
-    if values.len() != 6 {
+    if values.len() != 8 {
         return Err("选区坐标数量错误".to_owned());
     }
     let roi = Roi {
@@ -117,11 +146,15 @@ fn parse_selection(text: &str) -> Result<Selection, String> {
         height: values[3],
     }
     .validate(values[4], values[5])?;
-    Ok(Selection {
+    let selection = Selection {
         roi,
         width: values[4],
         height: values[5],
-    })
+        origin_x: values[6],
+        origin_y: values[7],
+    };
+    selection.screen_bounds(selection.desktop())?;
+    Ok(selection)
 }
 
 /// Bit mask: left=1, right=2, top=4, bottom=8; zero means move.
@@ -278,6 +311,8 @@ mod tests {
             },
             width: 1920,
             height: 1080,
+            origin_x: 0,
+            origin_y: 0,
         };
         let b = Selection {
             roi: Roi {
@@ -295,29 +330,28 @@ mod tests {
             window: Some((-800, 200)),
         };
         assert_eq!(RegionSettings::parse(&config.encode()).unwrap(), config);
-        assert_eq!(
-            RegionSettings::parse("90,50,200,30,1920,1080")
-                .unwrap()
-                .selections,
-            vec![a]
-        );
+        assert!(RegionSettings::parse("90,50,200,30,1920,1080").is_err());
         assert!(
-            RegionSettings::parse("pokemmo-regions-v1\nregion=1900,0,200,30,1920,1080\n").is_err()
+            RegionSettings::parse("pokemmo-regions-v2\nregion=90,50,200,30,1920,1080\n").is_err()
         );
-        assert!(RegionSettings::parse("pokemmo-regions-v1\nregion=broken\n").is_err());
+        assert!(RegionSettings::parse(
+            "pokemon-screen-regions-v1\nregion=1900,0,200,30,1920,1080,0,0\n"
+        )
+        .is_err());
+        assert!(RegionSettings::parse("pokemon-screen-regions-v1\nregion=broken\n").is_err());
         // An intentionally emptied list must round-trip, rather than reviving the legacy ROI.
         let empty = RegionSettings::default();
         assert_eq!(RegionSettings::parse(&empty.encode()).unwrap(), empty);
         let oversized = format!(
-            "pokemmo-regions-v1\n{}",
-            "region=90,50,200,30,1920,1080\n".repeat(MAX_REGIONS + 1)
+            "pokemon-screen-regions-v1\n{}",
+            "region=90,50,200,30,1920,1080,0,0\n".repeat(MAX_REGIONS + 1)
         );
         assert!(RegionSettings::parse(&oversized).is_err());
     }
     #[test]
-    fn custom_names_round_trip_and_old_lists_have_defaults() {
+    fn custom_names_round_trip_and_unnamed_lists_have_defaults() {
         let mut settings = RegionSettings::parse(
-            "pokemmo-regions-v1\nregion=90,50,200,30,1920,1080\nregion=550,55,180,30,1920,1080\n",
+            "pokemon-screen-regions-v1\nregion=90,50,200,30,1920,1080,0,0\nregion=550,55,180,30,1920,1080,0,0\n",
         )
         .unwrap();
         assert_eq!(settings.name(0), "选区 1");
@@ -331,6 +365,58 @@ mod tests {
         assert!(settings.rename(2, "不存在").is_err());
         settings.rename(0, " ").unwrap();
         assert_eq!(settings.name(0), "选区 1");
+    }
+    #[test]
+    fn screen_coordinates_support_negative_monitors_and_reject_changed_layout() {
+        let desktop = Bounds {
+            x: -1920,
+            y: -200,
+            width: 3840,
+            height: 1280,
+        };
+        let selection = Selection {
+            roi: Roi {
+                x: 100,
+                y: 50,
+                width: 200,
+                height: 30,
+            },
+            width: desktop.width,
+            height: desktop.height,
+            origin_x: desktop.x,
+            origin_y: desktop.y,
+        };
+        assert_eq!(
+            selection.screen_bounds(desktop).unwrap(),
+            Bounds {
+                x: -1820,
+                y: -150,
+                width: 200,
+                height: 30
+            }
+        );
+        let config = RegionSettings {
+            selections: vec![selection],
+            ..RegionSettings::default()
+        };
+        assert_eq!(
+            RegionSettings::parse(&config.encode()).unwrap(),
+            RegionSettings {
+                names: vec![String::new()],
+                ..config
+            }
+        );
+        assert!(selection.screen_bounds(Bounds { x: 0, ..desktop }).is_err());
+        assert!(selection
+            .screen_bounds(Bounds {
+                width: 1920,
+                ..desktop
+            })
+            .is_err());
+        assert!(RegionSettings::parse(
+            "pokemon-screen-regions-v1\nregion=100,0,200,30,1920,1080,2147483647,0\n"
+        )
+        .is_err());
     }
     #[test]
     fn labels_are_above_each_region_and_support_negative_monitor_coordinates() {
@@ -356,7 +442,7 @@ mod tests {
         assert!(details.x >= screen.x && details.x + details.width <= screen.x + screen.width);
     }
     #[test]
-    fn moving_and_resizing_regions_stay_within_the_game() {
+    fn moving_and_resizing_regions_stay_within_the_desktop() {
         let roi = Roi {
             x: 100,
             y: 80,

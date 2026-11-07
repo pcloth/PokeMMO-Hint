@@ -175,14 +175,11 @@ pub(super) unsafe fn edit(
     name: String,
     others: Vec<Roi>,
 ) -> Result<Option<Selection>, String> {
-    let game = game_window()?;
-    if client_size(game)? != (selected.width, selected.height) {
-        return Err("游戏尺寸改变，请删除旧选区后重新添加。".to_owned());
-    }
-    let mut origin = Point::default();
-    if ClientToScreen(game, &mut origin) == 0 {
-        return Err("无法取得游戏位置".to_owned());
-    }
+    selected.screen_bounds(desktop_bounds())?;
+    let origin = Point {
+        x: selected.origin_x,
+        y: selected.origin_y,
+    };
     ShowWindow(parent, 0);
     let hwnd = CreateWindowExW(
         0x80088,

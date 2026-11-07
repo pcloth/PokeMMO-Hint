@@ -1,0 +1,17 @@
+{
+  "version": "0.5.0",
+  "scope": "Source audit, core tests and Windows adapter type checking; no Windows UI runtime execution",
+  "game_process_apis": [
+    "EnumWindows",
+    "GetWindowThreadProcessId",
+    "OpenProcess",
+    "QueryFullProcessImageNameW"
+  ],
+  "game_process_api_references": 0,
+  "capture": "User-selected virtual desktop rectangles; any visible screen source",
+  "focus": "No source application foreground restriction; button tooltips only check the helper itself",
+  "configuration": "screen-regions.txt; old game-relative files preserved and require re-selection",
+  "coordinate_tests": "Negative monitor origin, round trip, layout changes and overflow validation passed",
+  "core_tests": 20,
+  "clippy": "passed with windows-check and -D warnings"
+}

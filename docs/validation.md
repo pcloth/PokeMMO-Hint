@@ -4,6 +4,24 @@
 
 ## 当前 Windows OCR 工具
 
+### 0.5.0：通用屏幕 OCR，无游戏进程依赖
+
+删除 `EnumWindows`、`GetWindowThreadProcessId`、`OpenProcess`、`QueryFullProcessImageNameW` 及 PokeMMO 可执行文件名匹配。框选、编辑、抓屏与标签改为虚拟桌面坐标；不再要求游戏启动或位于前台。按钮提示只判断辅助程序自身是否处于前台。
+
+配置另存 `screen-regions.txt`，保存每个选区相对虚拟桌面的偏移、屏幕原点和尺寸，支持负坐标副屏；显示器布局变化时拒绝沿用。旧窗口坐标配置保留，首次升级需重新框选，并尽量沿用旧主窗口位置。屏幕选区固定，移动目标窗口后需手动调整。适用于任意可见来源，物种／形态／世代规则的原数据限制仍保留。
+
+20 项核心测试及严格 Windows 适配层 Clippy 检查通过；新增验证负原点屏幕转换、屏幕配置往返、布局变化拒绝及坐标溢出保护。Windows 模拟器／其他游戏实机框选和浮窗仍需用户本机验收。
+
+### 发版修复：DLL 名称中的加号
+
+用户实测发版脚本在 `libstdc++-6.dll` 被名称校验误拒绝。已在 PE 导入名称允许字符中加入 `+`，保留文件名和扩展名限制；使用独立 objdump 遍历本机 Tesseract 的所有递归 DLL 导入，全部名称通过修正规则，路径形式和非 DLL 扩展名仍拒绝。该检查验证名称规则，不代表已执行完整 Windows 发版。
+
+### 0.4.2：便携发行内置 Tesseract
+
+按用户要求将发行包改为内置 Tesseract EXE、递归依赖 DLL 和中文模型。`scripts/ocr_runtime.ps1` 解析 x64 PE 普通与延迟导入，缺少非系统依赖即报错。发版脚本保留来源运行目录许可材料，记录运行文件与版本哈希；解压后检查闭合依赖，并使用包内环境执行生成图片的 OCR 自检。用户启动脚本不再调用安装器、winget 或 PowerShell；应用优先使用相邻 OCR 目录。删除旧发行安装脚本。
+
+19 项核心测试和 Windows 适配层 Clippy 通过。独立 objdump 核对得到 27 个运行文件，递归依赖均可由该目录和 Windows 系统库满足；引擎＋模型的临时 ZIP 样例压缩为 39,028,728 字节，解压哈希全部吻合。Linux Tesseract C API 使用 Windows Arial Bold 字体生成的测试图片，实际读出 `No.573`。证据见 [运行文件核对](evidence/portable-ocr-runtime.json) 和 [发行输入检查](evidence/release-input-validation.json)。这些不是新版 Windows 应用的运行验收；实际便携包及 Windows OCR 自检仍需在发布者本机执行。下方轻量发版记录为历史行为，已被本版替代。
+
 ### 仓库清理与轻量发行脚本
 
 删除旧 Mod 资源、`.mod` 测试包、构建／UIA 探针脚本及对应调查文档；保留 OCR 程序、数据导入／核对、图标和相关证据。增加 `.gitignore`、行尾配置、Windows PowerShell 发版脚本、用户启动／引擎安装脚本和用户说明。轻量包只带模型，由首次启动安装 Tesseract 引擎，不复制本机全部 DLL。模型 SHA-256 固定，脚本按 Cargo 版本号测试、编译、压缩、解压校验并生成发布校验值。
