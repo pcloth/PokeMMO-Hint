@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use pokemmo_hint::{hint, lookup_query, match_ocr, species_data, MatchResult};
 
 mod ocr;
@@ -6,6 +8,10 @@ mod win;
 
 fn main() {
     if let Err(error) = run() {
+        #[cfg(windows)]
+        if std::env::args_os().len() == 1 {
+            win::show_startup_error(&error);
+        }
         eprintln!("错误：{error}");
         std::process::exit(1);
     }

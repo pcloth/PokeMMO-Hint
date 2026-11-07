@@ -1,6 +1,6 @@
 # Windows 发版
 
-目前交付内置引擎的便携 ZIP：应用 EXE、Tesseract 命令行程序、它递归依赖的运行 DLL、中文模型、启动脚本和用户说明。用户解压即可离线运行，无需管理员权限，无需安装 Tesseract，也不需要 Rust 或编译工具。
+目前交付内置引擎的便携 ZIP：应用 EXE、Tesseract 命令行程序、它递归依赖的运行 DLL、中文模型、用户说明。用户解压即可离线运行，无需管理员权限，无需安装 Tesseract，也不需要 Rust 或编译工具。
 
 ## 发布者准备
 
@@ -33,9 +33,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_window
 ## 包内结构
 
 ```text
-PokeMMO-Hint-v0.5.0-windows-x64/
+PokeMMO-Hint-v0.5.1-windows-x64/
   pokemmo-hint.exe
-  Start.cmd
   README.txt
   release.json
   SHA256SUMS.txt
@@ -58,7 +57,9 @@ PokeMMO-Hint-v0.5.0-windows-x64/
 
 不打包源码构建缓存、ROM、游戏客户端、截图或发布者的选区配置。用户屏幕选区配置在 `%LOCALAPPDATA%\PokeMMOHint\screen-regions.txt`。旧版游戏窗口坐标不能直接转换，原 `regions.txt`／`roi.txt` 保留，升级后需重新框选一次；此后屏幕选区自动保存。
 
-用户双击 `Start.cmd`：脚本只设置本次进程的包内引擎、模型与 DLL 路径，检查包内引擎能够运行后启动应用。不调用 PowerShell、winget 或安装程序。直接启动应用 EXE 也会优先使用相邻 `ocr/` 文件夹；系统已有其他 Tesseract 不影响便携版选择。
+用户直接双击 `pokemmo-hint.exe`。程序按 Windows GUI 子系统编译，发行包不再包含 `Start.cmd`，正常启动只显示主界面。应用优先使用相邻 `ocr/` 文件夹；系统已有其他 Tesseract 不影响便携版选择。OCR 子进程保持无控制台启动。主界面启动失败时用 Windows 错误对话框提示。
+
+发版脚本会检查 PE 子系统为 GUI（2），拒绝打包控制台版本。编号／OCR 自检使用显式重定向输出和等待退出，继续核对退出码与 `#573` 结果；不依赖 GUI 程序自动附着终端。
 
 本机已检查的 Tesseract 发行版实际依赖 **27 个运行文件（1 个 EXE、26 个 DLL）**，合计 121,408,797 字节，约 116 MiB，尚未计入中文模型。版本不同，DLL 名称和体积也可能变化，脚本按实际依赖计算。中文模型仍约 2.4 MB，包体增加主要来自引擎与 DLL。只包含这批运行文件和中文模型的临时 ZIP 样例约 39 MB（不含应用及文档），正式包体积以发版结果为准。`ocr/runtime.json` 记录版本输出、每个运行文件的 SHA-256 和系统库列表。
 
@@ -71,8 +72,8 @@ PokeMMO-Hint-v0.5.0-windows-x64/
 校验下载包：
 
 ```powershell
-Get-FileHash .\dist\PokeMMO-Hint-v0.5.0-windows-x64.zip -Algorithm SHA256
-Get-Content .\dist\PokeMMO-Hint-v0.5.0-windows-x64.zip.sha256
+Get-FileHash .\dist\PokeMMO-Hint-v0.5.1-windows-x64.zip -Algorithm SHA256
+Get-Content .\dist\PokeMMO-Hint-v0.5.1-windows-x64.zip.sha256
 ```
 
 将 ZIP 和 `.sha256` 上传到对应版本的 Release，说明支持 Windows x64、内置 OCR 引擎且离线免安装、覆盖基础形态 1–649。源码是否公开与二进制发包分别决定；脚本不会自动上传、提交或推送。

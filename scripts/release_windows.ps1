@@ -24,17 +24,70 @@ function Invoke-Checked {
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Program failed (exit $LASTEXITCODE)." }
 }
+# GUI-subsystem programs need explicit redirected handles and an explicit wait for CLI checks.
+function Convert-NativeArgument {
+    param([string]$Value)
+    $result = [Text.StringBuilder]::new()
+    [void]$result.Append('"')
+    $slashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char]92) { $slashes++; continue }
+        if ($character -eq [char]34) {
+            [void]$result.Append([string]::new([char]92, $slashes * 2 + 1))
+        } else {
+            [void]$result.Append([string]::new([char]92, $slashes))
+        }
+        [void]$result.Append($character)
+        $slashes = 0
+    }
+    [void]$result.Append([string]::new([char]92, $slashes * 2))
+    [void]$result.Append('"')
+    $result.ToString()
+}
+function Invoke-AppCheck {
+    param([string]$Program, [string[]]$Arguments)
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Program
+    $info.Arguments = (($Arguments | ForEach-Object { Convert-NativeArgument $_ }) -join ' ')
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw 'Could not start the packaged application check.' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill(); $process.WaitForExit()
+            throw 'Application self-check timed out after 30 seconds.'
+        }
+        $output = $stdout.GetAwaiter().GetResult()
+        $errorText = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) { throw ("Application self-check failed: " + $errorText + $output) }
+        Write-Host $output
+        if ($errorText) { Write-Host $errorText }
+        $output
+    } finally { $process.Dispose() }
+}
 function Write-Utf8 {
     param([string]$Path, [string]$Text, [switch]$Bom)
     [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new([bool]$Bom))
 }
-function Assert-X64PE {
+function Assert-X64Gui {
     param([string]$Path)
     $bytes = [IO.File]::ReadAllBytes($Path)
     if ($bytes.Length -lt 64 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Application is not a Windows PE executable.' }
     $offset = [BitConverter]::ToInt32($bytes, 0x3c)
     if ($offset -lt 0 -or $offset + 24 -gt $bytes.Length -or [BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550 -or [BitConverter]::ToUInt16($bytes, $offset + 4) -ne 0x8664) {
         throw 'Expected an x64 Windows PE executable.'
+    }
+    $optional = $offset + 24
+    if ($optional + 70 -gt $bytes.Length -or [BitConverter]::ToUInt16($bytes, $optional) -ne 0x20b -or [BitConverter]::ToUInt16($bytes, $optional + 68) -ne 2) {
+        throw 'Expected a Windows GUI-subsystem executable, not a console application.'
     }
 }
 
@@ -108,9 +161,9 @@ try {
         Invoke-Checked -Program $cargo.Source -Arguments @('build', '--release', '--target', $target, '--target-dir', (Join-Path $projectDir 'target'), '--locked', '--offline')
     } finally { Pop-Location }
     $application = Join-Path $projectDir "target\$target\release\pokemmo-hint.exe"
-    Assert-X64PE $application
-    Invoke-Checked -Program $application -Arguments @('--text', 'No.573')
-    Invoke-Checked -Program $application -Arguments @('--text', 'No.523')
+    Assert-X64Gui $application
+    $null = Invoke-AppCheck -Program $application -Arguments @('--text', 'No.573')
+    $null = Invoke-AppCheck -Program $application -Arguments @('--text', 'No.523')
 
     $stage = Join-Path $outputDir ('.staging-' + [guid]::NewGuid().ToString('N'))
     $package = Join-Path $stage $packageName
@@ -118,9 +171,6 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $package 'licenses') -Force | Out-Null
     Copy-Item -LiteralPath $application -Destination (Join-Path $package 'pokemmo-hint.exe')
     Copy-Item -LiteralPath $model -Destination (Join-Path $package 'ocr\tessdata\chi_sim.traineddata')
-    foreach ($name in @('Start.cmd')) {
-        Copy-Item -LiteralPath (Join-Path $projectDir "release\$name") -Destination (Join-Path $package $name)
-    }
     foreach ($name in @('README.txt')) {
         Write-Utf8 -Path (Join-Path $package $name) -Text (Get-Content -LiteralPath (Join-Path $projectDir "release\$name") -Raw -Encoding UTF8) -Bom
     }
@@ -159,6 +209,7 @@ try {
         model = 'chi_sim.traineddata'; model_sha256 = $expectedHash.ToLowerInvariant()
         static_crt = $true; species = '1-649 base forms'; configuration_included = $false
         coordinate_mode = 'screen'; target_process_required = $false; type_chart = 'generations 2-5'
+        windows_subsystem = 'gui'; launch = 'pokemmo-hint.exe'
     }
     Write-Utf8 (Join-Path $package 'release.json') ($metadata | ConvertTo-Json)
     $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName)
@@ -201,19 +252,18 @@ try {
         $bitmap.Save($smokeImage, [Drawing.Imaging.ImageFormat]::Bmp)
     } finally { $font.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
     # This actually runs the packaged OCR engine/model through the packaged application.
-    $smokeOutput = @(& (Join-Path $unpacked 'pokemmo-hint.exe') --image $smokeImage 2>&1)
-    if ($LASTEXITCODE -ne 0 -or ($smokeOutput -join "`n") -notmatch '(?m)^#573\s') {
-        throw ("Packaged OCR smoke test did not recognize No.573: " + ($smokeOutput -join ' '))
+    $smokeOutput = Invoke-AppCheck -Program (Join-Path $unpacked 'pokemmo-hint.exe') -Arguments @('--image', $smokeImage)
+    if ($smokeOutput -notmatch '(?m)^#573\s') {
+        throw ("Packaged OCR smoke test did not recognize No.573: " + $smokeOutput)
     }
-    $smokeOutput | ForEach-Object { Write-Host "$_" }
-    Assert-X64PE (Join-Path $unpacked 'pokemmo-hint.exe')
-    Invoke-Checked -Program (Join-Path $unpacked 'pokemmo-hint.exe') -Arguments @('--text', 'No.573')
+    Assert-X64Gui (Join-Path $unpacked 'pokemmo-hint.exe')
+    $null = Invoke-AppCheck -Program (Join-Path $unpacked 'pokemmo-hint.exe') -Arguments @('--text', 'No.573')
     Move-Item -LiteralPath $tempZip -Destination $zip -Force:$Force
     $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Utf8 $checksum ("$zipHash  $packageName.zip`r`n")
     Write-Host "Release ready: $zip"
     Write-Host "SHA-256 file: $checksum"
-    Write-Host 'Upload both files as release assets. Recipients extract the ZIP and double-click Start.cmd.'
+    Write-Host 'Upload both files as release assets. Recipients extract the ZIP and double-click pokemmo-hint.exe.'
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1

@@ -4,6 +4,12 @@
 
 ## 当前 Windows OCR 工具
 
+### 0.5.1：发行版无附加控制台窗口
+
+用户截图确认发行版主界面旁存在黑色终端。主 EXE 改为 `windows_subsystem = "windows"`，正常 GUI 启动失败使用原生错误对话框；OCR 子进程原有 `CREATE_NO_WINDOW` 保留。移除发行 `Start.cmd` 模板，用户直接启动 EXE，避免批处理终端等待主界面退出。
+
+发版脚本同时验证 x64 PE 的 GUI 子系统，使用 `.NET Process` 的显式输出重定向、无控制台创建和等待退出执行 GUI EXE 的 CLI 自检，保留退出码、输出、超时和 OCR 结果校验。20 项核心测试与 Windows 适配层 Clippy 通过；当前环境未执行新 Windows GUI 或 PowerShell 发版，实际控制台消失需重新打包后在 Windows 验证。
+
 ### 0.5.0：通用屏幕 OCR，无游戏进程依赖
 
 删除 `EnumWindows`、`GetWindowThreadProcessId`、`OpenProcess`、`QueryFullProcessImageNameW` 及 PokeMMO 可执行文件名匹配。框选、编辑、抓屏与标签改为虚拟桌面坐标；不再要求游戏启动或位于前台。按钮提示只判断辅助程序自身是否处于前台。

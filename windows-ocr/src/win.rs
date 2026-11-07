@@ -102,6 +102,7 @@ struct BitmapInfo {
 
 #[link(name = "user32")]
 extern "system" {
+    fn MessageBoxW(hwnd: Handle, text: *const u16, title: *const u16, kind: u32) -> i32;
     fn SetProcessDpiAwarenessContext(context: isize) -> i32;
     fn GetDpiForWindow(hwnd: Handle) -> u32;
     fn AdjustWindowRectExForDpi(rect: *mut Rect, style: u32, menu: i32, ex: u32, dpi: u32) -> i32;
@@ -915,6 +916,16 @@ unsafe fn register(name: &str, proc: Proc) -> Result<(), String> {
         return Err(format!("注册窗口失败：{}", std::io::Error::last_os_error()));
     }
     Ok(())
+}
+pub fn show_startup_error(error: &str) {
+    unsafe {
+        MessageBoxW(
+            0,
+            wide(error).as_ptr(),
+            wide("PokeMMO 属性提示 · 启动失败").as_ptr(),
+            0x10,
+        );
+    }
 }
 pub fn run() -> Result<(), String> {
     unsafe {

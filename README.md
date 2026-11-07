@@ -32,10 +32,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_window
 
 脚本读取 `windows-ocr/Cargo.toml` 的版本号，测试、编译并打包到 `dist/`：
 
-- `PokeMMO-Hint-v0.5.0-windows-x64.zip`
-- `PokeMMO-Hint-v0.5.0-windows-x64.zip.sha256`
+- `PokeMMO-Hint-v0.5.1-windows-x64.zip`
+- `PokeMMO-Hint-v0.5.1-windows-x64.zip.sha256`
 
-将这两个文件上传到 GitHub/Gitee Release 或直接发送即可。用户解压整个 ZIP，双击 `Start.cmd`，包内已带 Tesseract 引擎、运行 DLL 和中文模型，可离线直接运行，不需要安装 Tesseract、Rust、编译器或 ROM。
+将这两个文件上传到 GitHub/Gitee Release 或直接发送即可。用户解压整个 ZIP，双击 `pokemmo-hint.exe`，包内已带 Tesseract 引擎、运行 DLL 和中文模型，可离线直接运行，不需要安装 Tesseract、Rust、编译器或 ROM。
 
 后续修改 `Cargo.toml` 的 `version`，先执行 `cargo generate-lockfile --manifest-path .\windows-ocr\Cargo.toml --offline` 同步锁文件，再运行脚本。同版本重新打包可加 `-Force`。脚本只生成本地包，不自动上传或推送 Git。
 

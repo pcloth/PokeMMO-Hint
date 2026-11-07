@@ -1,0 +1,12 @@
+{
+  "version": "0.5.1",
+  "scope": "Source checks and core tests; no Windows GUI runtime execution",
+  "application_subsystem": "windows GUI",
+  "release_launcher": "pokemmo-hint.exe, no CMD launcher",
+  "startup_error": "native message box in GUI mode",
+  "ocr_children": "CREATE_NO_WINDOW retained",
+  "publisher_checks": "PE subsystem 2 validation; explicit process wait, redirected stdout/stderr and timeout for CLI checks",
+  "core_tests": 20,
+  "clippy": "passed",
+  "windows_runtime": "awaits local rebuild/release execution"
+}

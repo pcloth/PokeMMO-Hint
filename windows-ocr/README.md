@@ -1,8 +1,8 @@
-# Windows OCR 属性提示（Rust 0.5.0）
+# Windows OCR 属性提示（Rust 0.5.1）
 
 这是独立 Windows 程序，不是 `.mod` 包。直接截取用户框选的屏幕区域，无需检测 PokeMMO 进程；可用于模拟器、其他宝可梦游戏或图鉴页面，物种及相克规则需在现有数据范围内。Rust 原生窗口、截图和属性匹配不依赖第三方 Rust crate；OCR 使用 Tesseract 5 和简体中文模型。应用运行时本地识别，不发送截图或查询到云端。
 
-0.5.0 支持多个选区持续识别，每个成功匹配的选区上方显示独立的弱点小标签，鼠标悬停展开完整信息卡。选区和主窗口位置自动保存。用户已确认前版卡片界面改善；新版已通过核心测试和 Windows 适配层静态检查，本环境不能启动 Windows EXE，**多选区与浮动标签需要本机重新编译验证**。
+0.5.1 支持多个选区持续识别，每个成功匹配的选区上方显示独立的弱点小标签，鼠标悬停展开完整信息卡。选区和主窗口位置自动保存。用户已确认前版卡片界面改善；新版已通过核心测试和 Windows 适配层静态检查，本环境不能启动 Windows EXE，**多选区与浮动标签需要本机重新编译验证**。
 
 ## 更新已有版本
 
@@ -79,9 +79,9 @@ python scripts/import_ocr_species.py --rom /mnt/d/games/PokeMMO/roms/黑白.nds 
 ## 命令行诊断
 
 ```powershell
-.\windows-ocr\target\release\pokemmo-hint.exe --text 'No.573 奇诺栗鼠'
-.\windows-ocr\target\release\pokemmo-hint.exe --text '523'
-.\windows-ocr\target\release\pokemmo-hint.exe --image 'D:\图片\敌人名字.png'
+.\windows-ocr\target\release\pokemmo-hint.exe --text 'No.573 奇诺栗鼠' 2>&1 | Out-String
+.\windows-ocr\target\release\pokemmo-hint.exe --text '523' 2>&1 | Out-String
+.\windows-ocr\target\release\pokemmo-hint.exe --image 'D:\图片\敌人名字.png' 2>&1 | Out-String
 ```
 
 手动 `--text` 和窗口测试输入框支持裸编号。`--image` 对指定图像直接执行单行 OCR，建议提供已经裁剪、放大的名字／编号图片；实时截图模式会自动放大、反色。指定引擎和模型目录可使用进程环境变量 `POKEMMO_TESSERACT`、`POKEMMO_TESSDATA`。
@@ -136,4 +136,4 @@ PokeMMO 对 ROM 的官方用途说明见 [Installing The Game](https://support.p
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_windows.ps1
 ```
 
-输出为 `dist/PokeMMO-Hint-v版本-windows-x64.zip` 及 `.zip.sha256`。发给用户的是这两个文件；用户解压整个 ZIP 后双击 `Start.cmd`，不需要 Rust，包内已有 Tesseract、运行 DLL 和中文模型，无需联网安装或管理员权限。详见 [发布流程](../docs/releasing.md)。
+输出为 `dist/PokeMMO-Hint-v版本-windows-x64.zip` 及 `.zip.sha256`。发给用户的是这两个文件；用户解压整个 ZIP 后双击 `pokemmo-hint.exe`，不需要 Rust，包内已有 Tesseract、运行 DLL 和中文模型，无需联网安装或管理员权限。详见 [发布流程](../docs/releasing.md)。
