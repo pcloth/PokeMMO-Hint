@@ -1,0 +1,18 @@
+{
+  "host": "Linux",
+  "check": "Application and generated toolbar icon resource packaging, not application runtime",
+  "resources": {
+    "RT_ICON": 43,
+    "RT_GROUP_ICON": 10
+  },
+  "toolbar_icons": 9,
+  "toolbar_sizes": [
+    24,
+    32,
+    48,
+    64
+  ],
+  "alpha": "Preserved in all toolbar frames",
+  "pe_linker": "Rust bundled LLD, Windows x64 DLL /noentry",
+  "result": "passed"
+}

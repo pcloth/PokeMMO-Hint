@@ -1,0 +1,43 @@
+{
+  "host": "Linux",
+  "check": "Icon resource packaging only; not Windows application runtime validation",
+  "png": "windows-ocr/assets/app-icon.png",
+  "ico": "windows-ocr/assets/app.ico",
+  "sizes": [
+    [
+      16,
+      16
+    ],
+    [
+      24,
+      24
+    ],
+    [
+      32,
+      32
+    ],
+    [
+      48,
+      48
+    ],
+    [
+      64,
+      64
+    ],
+    [
+      128,
+      128
+    ],
+    [
+      256,
+      256
+    ]
+  ],
+  "alpha": "RGBA preserved in all seven frames",
+  "resources": {
+    "RT_ICON": 7,
+    "RT_GROUP_ICON": 1
+  },
+  "pe_linker": "Rust bundled LLD, Windows x64 DLL /noentry",
+  "result": "passed"
+}

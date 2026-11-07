@@ -1,0 +1,57 @@
+# Build caches and release packages
+/windows-ocr/target/
+/target/
+/dist/
+*.exe
+*.dll
+*.pdb
+*.msi
+*.zip
+
+# OCR runtime/model downloads: setup/release scripts prepare these locally.
+/windows-ocr/ocr/
+*.traineddata
+*.download
+
+# Game files, saves and local game resources never belong in this repository.
+*.nds
+*.gba
+*.gbc
+*.gb
+*.sav
+*.dsv
+*.mod
+/roms/
+/game-data/
+
+# Local configuration, captures and diagnostics
+.env
+.env.*
+!.env.example
+*.log
+*.dmp
+__pycache__/
+*.py[cod]
+/.venv/
+/venv/
+/captures/
+/uia-result*.jsonl
+regions.txt
+regions.tmp
+roi.txt
+
+# Editor/OS/session files
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*.tmp
+*.bak
+/.agents/
+/.codex/
+/.aws/
+
+# Keep Cargo.lock, generated PNG/ICO assets, licenses, scripts and evidence tracked.

@@ -1,0 +1,155 @@
+{
+  "scope": "649 national base species; ROM internal slots are not national numbers",
+  "bundled_count": 649,
+  "bundled_missing_ids": [],
+  "roms": [
+    {
+      "file": "心金.nds",
+      "game_code": "IPKE",
+      "personal_archive": "a/0/0/2",
+      "personal_slots": 508,
+      "national_base_count": 493,
+      "base_range": [
+        1,
+        493
+      ],
+      "type_mismatches": [],
+      "extra_slots_note": "Dummy, egg/placeholder and alternate-form slots; not new national species"
+    },
+    {
+      "file": "白金.nds",
+      "game_code": "CPUE",
+      "personal_archive": "poketool/personal/pl_personal.narc",
+      "personal_slots": 508,
+      "national_base_count": 493,
+      "base_range": [
+        1,
+        493
+      ],
+      "type_mismatches": [],
+      "extra_slots_note": "Dummy, egg/placeholder and alternate-form slots; not new national species"
+    },
+    {
+      "file": "黑白.nds",
+      "game_code": "IRAO",
+      "personal_archive": "a/0/1/6",
+      "personal_slots": 669,
+      "national_base_count": 649,
+      "base_range": [
+        1,
+        649
+      ],
+      "type_mismatches": [],
+      "extra_slots_note": "Dummy, egg/placeholder and alternate-form slots; not new national species"
+    },
+    {
+      "file": "火红.gba",
+      "game_code": "BPRE",
+      "national_base_count": 386,
+      "base_range": [
+        1,
+        386
+      ],
+      "type_table_offset": "0x254784",
+      "dex_mapping_offset": "0x251fee",
+      "type_mismatches": [],
+      "extra_slots_note": "Internal old-Unown slots map above 386 but are not Gen IV national species"
+    },
+    {
+      "file": "绿宝石.gba",
+      "game_code": "BPEE",
+      "national_base_count": 386,
+      "base_range": [
+        1,
+        386
+      ],
+      "type_table_offset": "0x3203cc",
+      "dex_mapping_offset": "0x31dc82",
+      "type_mismatches": [],
+      "extra_slots_note": "Internal old-Unown slots map above 386 but are not Gen IV national species"
+    }
+  ],
+  "chinese_base_name_mismatches": [],
+  "union_national_count": 649,
+  "union_missing_from_app": [],
+  "client_extra_labels": [
+    {
+      "string_id": 150650,
+      "label": "蛋"
+    },
+    {
+      "string_id": 150651,
+      "label": "蛋"
+    },
+    {
+      "string_id": 150652,
+      "label": "代欧奇希斯 [速度形态]"
+    },
+    {
+      "string_id": 150653,
+      "label": "结草贵妇 [砂土蓑衣]"
+    },
+    {
+      "string_id": 150654,
+      "label": "结草贵妇 [垃圾蓑衣]"
+    },
+    {
+      "string_id": 150655,
+      "label": "谢米 [天空形态]"
+    },
+    {
+      "string_id": 150656,
+      "label": "骑拉帝纳 [起源形态]"
+    },
+    {
+      "string_id": 150657,
+      "label": "洛托姆 [加热洛托姆]"
+    },
+    {
+      "string_id": 150658,
+      "label": "洛托姆 [清洗洛托姆]"
+    },
+    {
+      "string_id": 150659,
+      "label": "洛托姆 [结冰洛托姆]"
+    },
+    {
+      "string_id": 150660,
+      "label": "洛托姆 [旋转洛托姆]"
+    },
+    {
+      "string_id": 150661,
+      "label": "洛托姆 [切割洛托姆]"
+    },
+    {
+      "string_id": 150662,
+      "label": "飘浮泡泡 [太阳的样子]"
+    },
+    {
+      "string_id": 150663,
+      "label": "飘浮泡泡 [雨水的样子]"
+    },
+    {
+      "string_id": 150664,
+      "label": "飘浮泡泡 [雪云的样子]"
+    },
+    {
+      "string_id": 150665,
+      "label": "野蛮鲈鱼 [蓝条纹的样子]"
+    },
+    {
+      "string_id": 150666,
+      "label": "达摩狒狒 [达摩模式]"
+    },
+    {
+      "string_id": 150667,
+      "label": "美洛耶塔 [舞步形态]"
+    }
+  ],
+  "limitations": [
+    "Base species coverage is not an assertion that every species is currently catchable in PokeMMO.",
+    "Alternate forms are not currently selectable in the OCR helper.",
+    "PokeMMO internal string IDs and ROM personal slots use different mappings.",
+    "Names or a national number alone do not reliably identify every alternate form."
+  ]
+}

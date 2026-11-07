@@ -1,0 +1,1711 @@
+//! Native Win32 adapter. No injection, accessibility service, hooks, or game-file writes.
+#![allow(non_snake_case, dead_code)]
+#[cfg(all(windows, not(target_pointer_width = "64")))]
+compile_error!("This prototype requires 64-bit Windows Rust.");
+use crate::ocr::OcrConfig;
+use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap};
+use pokemmo_hint::{
+    hint_card, lookup_query, resolve_reads, species_data, HintCard, MatchResult, NameSuggestion,
+    Roi, Tracker,
+};
+use std::collections::HashMap;
+use std::sync::Mutex;
+mod overlay;
+mod paint;
+mod selection_edit;
+mod tooltips;
+use pokemmo_hint::regions::{Bounds, RegionSettings, Selection, MAX_REGIONS};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::{
+    ffi::c_void,
+    path::PathBuf,
+    ptr::{null, null_mut},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+type Handle = isize;
+type Proc = unsafe extern "system" fn(Handle, u32, usize, isize) -> isize;
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+#[repr(C)]
+#[derive(Default)]
+struct Msg {
+    hwnd: Handle,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+    time: u32,
+    point: Point,
+    private: u32,
+}
+#[repr(C)]
+struct WndClass {
+    style: u32,
+    proc: Option<Proc>,
+    cls_extra: i32,
+    wnd_extra: i32,
+    instance: Handle,
+    icon: Handle,
+    cursor: Handle,
+    brush: Handle,
+    menu: *const u16,
+    class: *const u16,
+}
+#[repr(C)]
+#[derive(Default)]
+struct Paint {
+    dc: Handle,
+    erase: i32,
+    rect: Rect,
+    restore: i32,
+    update: i32,
+    reserved: [u8; 32],
+}
+#[repr(C)]
+#[derive(Default)]
+struct BitmapHeader {
+    size: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bits: u16,
+    compression: u32,
+    image_size: u32,
+    xppm: i32,
+    yppm: i32,
+    used: u32,
+    important: u32,
+}
+#[repr(C)]
+struct BitmapInfo {
+    header: BitmapHeader,
+    colors: [u32; 1],
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn SetProcessDpiAwarenessContext(context: isize) -> i32;
+    fn GetDpiForWindow(hwnd: Handle) -> u32;
+    fn AdjustWindowRectExForDpi(rect: *mut Rect, style: u32, menu: i32, ex: u32, dpi: u32) -> i32;
+    fn EnableWindow(hwnd: Handle, enable: i32) -> i32;
+    fn GetCursorPos(point: *mut Point) -> i32;
+    fn SetWindowDisplayAffinity(hwnd: Handle, affinity: u32) -> i32;
+    fn MonitorFromPoint(point: Point, flags: u32) -> Handle;
+    fn GetMonitorInfoW(monitor: Handle, info: *mut MonitorInfo) -> i32;
+    fn RegisterClassW(class: *const WndClass) -> u16;
+    fn CreateWindowExW(
+        ex: u32,
+        class: *const u16,
+        title: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        parent: Handle,
+        menu: Handle,
+        instance: Handle,
+        param: *const c_void,
+    ) -> Handle;
+    fn DefWindowProcW(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize;
+    fn GetWindowLongPtrW(hwnd: Handle, index: i32) -> isize;
+    fn SetWindowLongPtrW(hwnd: Handle, index: i32, value: isize) -> isize;
+    fn ShowWindow(hwnd: Handle, command: i32) -> i32;
+    fn DestroyWindow(hwnd: Handle) -> i32;
+    fn GetMessageW(msg: *mut Msg, hwnd: Handle, min: u32, max: u32) -> i32;
+    fn TranslateMessage(msg: *const Msg) -> i32;
+    fn DispatchMessageW(msg: *const Msg) -> isize;
+    fn PostQuitMessage(code: i32);
+    fn SetTimer(hwnd: Handle, id: usize, interval: u32, callback: *const c_void) -> usize;
+    fn KillTimer(hwnd: Handle, id: usize) -> i32;
+    fn SetWindowTextW(hwnd: Handle, text: *const u16) -> i32;
+    fn GetWindowTextW(hwnd: Handle, text: *mut u16, max: i32) -> i32;
+    fn SendMessageW(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize;
+    fn EnumWindows(
+        callback: Option<unsafe extern "system" fn(Handle, isize) -> i32>,
+        data: isize,
+    ) -> i32;
+    fn IsWindowVisible(hwnd: Handle) -> i32;
+    fn IsIconic(hwnd: Handle) -> i32;
+    fn IsWindow(hwnd: Handle) -> i32;
+    fn GetWindowThreadProcessId(hwnd: Handle, pid: *mut u32) -> u32;
+    fn GetClientRect(hwnd: Handle, rect: *mut Rect) -> i32;
+    fn GetWindowRect(hwnd: Handle, rect: *mut Rect) -> i32;
+    fn ClientToScreen(hwnd: Handle, point: *mut Point) -> i32;
+    fn ScreenToClient(hwnd: Handle, point: *mut Point) -> i32;
+    fn GetForegroundWindow() -> Handle;
+    fn SetWindowPos(hwnd: Handle, after: Handle, x: i32, y: i32, w: i32, h: i32, flags: u32)
+        -> i32;
+    fn GetSystemMetrics(index: i32) -> i32;
+    fn SetLayeredWindowAttributes(hwnd: Handle, key: u32, alpha: u8, flags: u32) -> i32;
+    fn SetCapture(hwnd: Handle) -> Handle;
+    fn ReleaseCapture() -> i32;
+    fn InvalidateRect(hwnd: Handle, rect: *const Rect, erase: i32) -> i32;
+    fn BeginPaint(hwnd: Handle, paint: *mut Paint) -> Handle;
+    fn EndPaint(hwnd: Handle, paint: *const Paint) -> i32;
+    fn FillRect(dc: Handle, rect: *const Rect, brush: Handle) -> i32;
+    fn DrawTextW(dc: Handle, text: *const u16, len: i32, rect: *mut Rect, format: u32) -> i32;
+    fn LoadCursorW(instance: Handle, name: *const u16) -> Handle;
+    fn SetCursor(cursor: Handle) -> Handle;
+    fn GetDlgItem(hwnd: Handle, id: i32) -> Handle;
+    fn DrawIconEx(
+        dc: Handle,
+        x: i32,
+        y: i32,
+        icon: Handle,
+        width: i32,
+        height: i32,
+        step: u32,
+        brush: Handle,
+        flags: u32,
+    ) -> i32;
+    fn DrawFocusRect(dc: Handle, rect: *const Rect) -> i32;
+    fn LoadImageW(
+        instance: Handle,
+        name: *const u16,
+        kind: u32,
+        width: i32,
+        height: i32,
+        flags: u32,
+    ) -> Handle;
+    fn GetDC(hwnd: Handle) -> Handle;
+    fn ReleaseDC(hwnd: Handle, dc: Handle) -> i32;
+}
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> Handle;
+    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+    fn QueryFullProcessImageNameW(
+        process: Handle,
+        flags: u32,
+        name: *mut u16,
+        size: *mut u32,
+    ) -> i32;
+    fn CloseHandle(handle: Handle) -> i32;
+}
+#[link(name = "gdi32")]
+extern "system" {
+    fn GetStockObject(index: i32) -> Handle;
+    fn CreateCompatibleDC(dc: Handle) -> Handle;
+    fn DeleteDC(dc: Handle) -> i32;
+    fn CreateDIBSection(
+        dc: Handle,
+        info: *const BitmapInfo,
+        usage: u32,
+        bits: *mut *mut c_void,
+        section: Handle,
+        offset: u32,
+    ) -> Handle;
+    fn SelectObject(dc: Handle, obj: Handle) -> Handle;
+    fn DeleteObject(obj: Handle) -> i32;
+    fn BitBlt(
+        dest: Handle,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        src: Handle,
+        sx: i32,
+        sy: i32,
+        mode: u32,
+    ) -> i32;
+    fn CreatePen(style: i32, width: i32, color: u32) -> Handle;
+    fn Rectangle(dc: Handle, left: i32, top: i32, right: i32, bottom: i32) -> i32;
+    fn SetBkMode(dc: Handle, mode: i32) -> i32;
+    fn SetTextColor(dc: Handle, color: u32) -> u32;
+    fn SetBkColor(dc: Handle, color: u32) -> u32;
+    fn CreateSolidBrush(color: u32) -> Handle;
+    fn RoundRect(dc: Handle, left: i32, top: i32, right: i32, bottom: i32, w: i32, h: i32) -> i32;
+    fn CreateFontW(
+        height: i32,
+        width: i32,
+        escape: i32,
+        orientation: i32,
+        weight: i32,
+        italic: u32,
+        underline: u32,
+        strike: u32,
+        charset: u32,
+        out: u32,
+        clip: u32,
+        quality: u32,
+        pitch: u32,
+        face: *const u16,
+    ) -> Handle;
+    fn GetTextExtentPoint32W(dc: Handle, text: *const u16, len: i32, size: *mut Point) -> i32;
+    fn CreateCompatibleBitmap(dc: Handle, width: i32, height: i32) -> Handle;
+    fn GdiFlush() -> i32;
+    fn SaveDC(dc: Handle) -> i32;
+    fn RestoreDC(dc: Handle, saved: i32) -> i32;
+    fn SetViewportOrgEx(dc: Handle, x: i32, y: i32, old: *mut Point) -> i32;
+}
+#[repr(C)]
+struct MonitorInfo {
+    size: u32,
+    monitor: Rect,
+    work: Rect,
+    flags: u32,
+}
+const WM_DESTROY: u32 = 2;
+const WM_PAINT: u32 = 15;
+const WM_COMMAND: u32 = 0x111;
+const WM_TIMER: u32 = 0x113;
+const USER_DATA: i32 = -21;
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(Some(0)).collect()
+}
+unsafe fn set_text(hwnd: Handle, text: &str) {
+    SetWindowTextW(hwnd, wide(text).as_ptr());
+}
+unsafe fn get_text(hwnd: Handle) -> String {
+    let mut b = [0u16; 512];
+    let n = GetWindowTextW(hwnd, b.as_mut_ptr(), 512);
+    String::from_utf16_lossy(&b[..n.max(0) as usize])
+}
+
+unsafe extern "system" fn find_game(hwnd: Handle, data: isize) -> i32 {
+    if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+        return 1;
+    }
+    let mut pid = 0;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    let process = OpenProcess(0x1000, 0, pid); // QUERY_LIMITED_INFORMATION, no memory permissions
+    if process == 0 {
+        return 1;
+    }
+    let mut path = [0u16; 4096];
+    let mut n = path.len() as u32;
+    let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut n);
+    CloseHandle(process);
+    if ok != 0
+        && String::from_utf16_lossy(&path[..n as usize])
+            .to_lowercase()
+            .ends_with("\\pokemmo.exe")
+    {
+        *(data as *mut Handle) = hwnd;
+        return 0;
+    }
+    1
+}
+unsafe fn game_window() -> Result<Handle, String> {
+    let mut hwnd = 0;
+    EnumWindows(Some(find_game), &mut hwnd as *mut _ as isize);
+    if hwnd == 0 {
+        Err("未找到可见的 PokeMMO 游戏窗口，请先打开游戏".to_owned())
+    } else {
+        Ok(hwnd)
+    }
+}
+unsafe fn client_size(hwnd: Handle) -> Result<(i32, i32), String> {
+    let mut r = Rect::default();
+    if GetClientRect(hwnd, &mut r) == 0 {
+        return Err("无法取得游戏尺寸".to_owned());
+    }
+    Ok((r.right - r.left, r.bottom - r.top))
+}
+unsafe fn screen_rect(hwnd: Handle, roi: Roi) -> Result<Rect, String> {
+    let mut p = Point { x: roi.x, y: roi.y };
+    if ClientToScreen(hwnd, &mut p) == 0 {
+        return Err("游戏窗口已失效".to_owned());
+    }
+    Ok(Rect {
+        left: p.x,
+        top: p.y,
+        right: p.x + roi.width,
+        bottom: p.y + roi.height,
+    })
+}
+fn intersects(a: Rect, b: Rect) -> bool {
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+#[derive(Clone)]
+struct Update {
+    index: usize,
+    deferred: bool,
+    status: String,
+    body: String,
+    card: Option<HintCard>,
+    suggestion: Option<NameSuggestion>,
+}
+struct SlotState {
+    last: Option<Update>,
+    updated: Instant,
+    tag: Option<overlay::Window>,
+}
+impl Default for SlotState {
+    fn default() -> Self {
+        Self {
+            last: None,
+            updated: Instant::now(),
+            tag: None,
+        }
+    }
+}
+struct App {
+    hwnd: Handle,
+    status: String,
+    body: String,
+    card: Option<HintCard>,
+    suggestion: Option<NameSuggestion>,
+    confirm: Handle,
+    theme: Rc<paint::Theme>,
+    dpi: u32,
+    confirmed: Arc<Mutex<HashMap<String, u16>>>,
+    edit: Handle,
+    start: Handle,
+    settings: RegionSettings,
+    selector: Handle,
+    slots: Vec<SlotState>,
+    details: Option<overlay::Window>,
+    hovered: Option<usize>,
+    last_hover: Instant,
+    occlusions: Arc<Mutex<Vec<Rect>>>,
+    manual_preview: bool,
+    rx: Option<mpsc::Receiver<Update>>,
+    stop: Arc<AtomicBool>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+struct UiContext {
+    app: RefCell<App>,
+    tooltips: RefCell<tooltips::Tooltips>,
+    theme: Rc<paint::Theme>,
+    dpi: u32,
+}
+impl App {
+    fn halt(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+        self.rx = None;
+        self.slots.clear();
+        self.details = None;
+        self.hovered = None;
+        if let Ok(mut bounds) = self.occlusions.lock() {
+            bounds.clear();
+        }
+        unsafe {
+            set_text(self.start, "开始识别");
+            InvalidateRect(self.hwnd, null(), 0);
+        }
+    }
+    fn status(&mut self, text: &str) {
+        self.status = text.to_owned();
+        unsafe {
+            InvalidateRect(self.hwnd, null(), 0);
+        }
+    }
+    fn content(&mut self, body: &str, card: Option<HintCard>, suggestion: Option<NameSuggestion>) {
+        self.body = body.to_owned();
+        self.card = card;
+        self.suggestion = suggestion;
+        unsafe {
+            if let Some(s) = &self.suggestion {
+                if let Some(species) = species_data().iter().find(|p| p.id == s.id) {
+                    set_text(self.confirm, &format!("确认为 {}", species.name));
+                    ShowWindow(self.confirm, 5);
+                }
+            } else {
+                ShowWindow(self.confirm, 0);
+            }
+            InvalidateRect(self.hwnd, null(), 0);
+        }
+    }
+    fn persist(&mut self) -> Result<(), String> {
+        unsafe {
+            if IsIconic(self.hwnd) == 0 {
+                let mut r = Rect::default();
+                if GetWindowRect(self.hwnd, &mut r) != 0 {
+                    self.settings.window = Some((r.left, r.top));
+                }
+            }
+        }
+        save_settings(&self.settings)
+    }
+    fn rebuild_selector(&self) {
+        unsafe {
+            SendMessageW(self.selector, 0x14b, 0, 0);
+            for i in 0..self.settings.selections.len() {
+                SendMessageW(
+                    self.selector,
+                    0x143,
+                    0,
+                    wide(&self.settings.name(i)).as_ptr() as isize,
+                );
+            }
+            if !self.settings.selections.is_empty() {
+                SendMessageW(self.selector, 0x14e, self.settings.selected, 0);
+            }
+        }
+    }
+    fn preview(&mut self) {
+        if self.manual_preview {
+            return;
+        }
+        let index = self.settings.selected;
+        if let Some(update) = self.slots.get(index).and_then(|s| s.last.clone()) {
+            self.status(&format!(
+                "{} · {}",
+                self.settings.name(index),
+                update.status
+            ));
+            self.content(&update.body, update.card, update.suggestion);
+        } else {
+            self.status(&format!(
+                "已保存 {} 个选区；当前查看选区 {}",
+                self.settings.selections.len(),
+                index + 1
+            ));
+            self.content("开始识别后，每个选区会独立显示弱点标签。", None, None);
+        }
+    }
+    fn start(&mut self) -> Result<(), String> {
+        self.halt();
+        self.manual_preview = false;
+        if self.settings.selections.is_empty() {
+            return Err("请先添加至少一个选区".to_owned());
+        }
+        if self.settings.selections.len() > MAX_REGIONS {
+            return Err(format!("最多支持 {MAX_REGIONS} 个选区"));
+        }
+        let config = OcrConfig::discover()?;
+        unsafe {
+            game_window()?;
+        }
+        for s in &self.settings.selections {
+            s.roi.validate(s.width, s.height)?;
+        }
+        self.stop = Arc::new(AtomicBool::new(false));
+        self.slots = (0..self.settings.selections.len())
+            .map(|_| SlotState::default())
+            .collect();
+        let (tx, rx) = mpsc::channel();
+        self.rx = Some(rx);
+        for group in 0..self.settings.selections.len().min(2) {
+            let selections = self
+                .settings
+                .selections
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(group)
+                .step_by(2)
+                .collect();
+            let context = WorkerContext {
+                config: config.clone(),
+                own: self.hwnd,
+                stop: self.stop.clone(),
+                tx: tx.clone(),
+                confirmed: self.confirmed.clone(),
+                occlusions: self.occlusions.clone(),
+            };
+            self.workers
+                .push(thread::spawn(move || watch(context, selections)));
+        }
+        unsafe {
+            set_text(self.start, "暂停识别");
+        }
+        self.content("正在读取画面，请稍候…", None, None);
+        self.status(&format!(
+            "持续识别 {} 个选区；可最小化此窗口。",
+            self.settings.selections.len()
+        ));
+        Ok(())
+    }
+    fn sync_overlays(&mut self) {
+        unsafe {
+            let game = game_window().ok();
+            let foreground = GetForegroundWindow();
+            let active = !self.workers.is_empty()
+                && game.is_some()
+                && (Some(foreground) == game || foreground == self.hwnd);
+            if !active {
+                for slot in &mut self.slots {
+                    if let Some(tag) = &slot.tag {
+                        tag.hide();
+                    }
+                }
+                if let Some(details) = &self.details {
+                    details.hide();
+                }
+                self.hovered = None;
+                if let Ok(mut bounds) = self.occlusions.lock() {
+                    bounds.clear();
+                }
+                return;
+            }
+            let game = game.unwrap();
+            let dimensions = client_size(game).ok();
+            let mut visible = Vec::new();
+            let mut obstacles = Vec::new();
+            let mut expired = false;
+            for (index, selection) in self.settings.selections.iter().enumerate() {
+                let Some(slot) = self.slots.get_mut(index) else {
+                    continue;
+                };
+                if slot.updated.elapsed() > Duration::from_secs(15) && slot.last.take().is_some() {
+                    expired = true;
+                }
+                let region = if dimensions == Some((selection.width, selection.height)) {
+                    screen_rect(game, selection.roi).ok()
+                } else {
+                    None
+                };
+                if let Some(r) = region {
+                    obstacles.push(overlay::bounds(r));
+                }
+                let card = slot.last.as_ref().and_then(|u| u.card.clone());
+                if let (Some(card), Some(region)) = (card, region) {
+                    if slot.tag.is_none() {
+                        slot.tag =
+                            overlay::Window::new(self.theme.clone(), self.dpi, &card, false).ok();
+                    }
+                    if let Some(tag) = &mut slot.tag {
+                        tag.set_card(&card);
+                        let region = overlay::bounds(region);
+                        let screen = overlay::screen_for(region);
+                        let position =
+                            pokemmo_hint::regions::tag_position(region, tag.size(), screen);
+                        if position.overlaps(region) {
+                            tag.hide();
+                            continue;
+                        }
+                        tag.show_at(position);
+                        visible.push((index, card, region, position));
+                    }
+                } else if let Some(tag) = &slot.tag {
+                    tag.hide();
+                }
+            }
+            let mut cursor = Point::default();
+            GetCursorPos(&mut cursor);
+            if let Some((index, _, _, _)) = visible
+                .iter()
+                .find(|(_, _, _, tag)| tag.contains(cursor.x, cursor.y))
+            {
+                self.hovered = Some(*index);
+                self.last_hover = Instant::now();
+            } else if self
+                .details
+                .as_ref()
+                .and_then(|d| d.visible_bounds())
+                .is_some_and(|r| r.contains(cursor.x, cursor.y))
+            {
+                self.last_hover = Instant::now();
+            } else if self.last_hover.elapsed() > Duration::from_millis(350) {
+                self.hovered = None;
+            }
+            let hovered = self
+                .hovered
+                .and_then(|index| visible.iter().find(|(i, _, _, _)| *i == index));
+            if let Some((_, card, region, _)) = hovered {
+                if self.details.is_none() {
+                    self.details =
+                        overlay::Window::new(self.theme.clone(), self.dpi, card, true).ok();
+                }
+                if let Some(details) = &mut self.details {
+                    details.set_card(card);
+                    let mut avoid = obstacles.clone();
+                    avoid.extend(visible.iter().map(|(_, _, _, r)| *r));
+                    let position = pokemmo_hint::regions::detail_position(
+                        *region,
+                        details.size(),
+                        overlay::screen_for(*region),
+                        &avoid,
+                    );
+                    details.show_at(position);
+                }
+            } else {
+                self.hovered = None;
+                if let Some(details) = &self.details {
+                    details.hide();
+                }
+            }
+            let mut windows: Vec<Rect> = visible
+                .iter()
+                .map(|(_, _, _, r)| overlay::rect(*r))
+                .collect();
+            if let Some(r) = self.details.as_ref().and_then(|d| d.visible_bounds()) {
+                windows.push(overlay::rect(r));
+            }
+            if let Ok(mut bounds) = self.occlusions.lock() {
+                *bounds = windows;
+            }
+            if expired {
+                self.preview();
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize {
+    if msg == 0x14 {
+        return 1;
+    } // custom-painted background
+    if !matches!(
+        msg,
+        WM_COMMAND | WM_TIMER | WM_DESTROY | WM_PAINT | 0x2b | 0x133 | 0x232
+    ) {
+        return DefWindowProcW(hwnd, msg, w, l);
+    }
+    let p = GetWindowLongPtrW(hwnd, USER_DATA) as *const UiContext;
+    if p.is_null() {
+        return DefWindowProcW(hwnd, msg, w, l);
+    }
+    if msg == WM_PAINT {
+        let app = (&*p).app.try_borrow().ok();
+        paint::paint_window(hwnd, app.as_deref());
+        return 0;
+    }
+    if msg == 0x2b {
+        paint::button(&*(l as *const paint::DrawItem), &(*p).theme, (*p).dpi);
+        return 1;
+    }
+    if msg == 0x133 {
+        SetBkColor(w as Handle, 0xffffff);
+        SetTextColor(w as Handle, 0x3b291e);
+        return (*p).theme.white_brush();
+    }
+    if msg == WM_TIMER {
+        if let Ok(mut tips) = (&*p).tooltips.try_borrow_mut() {
+            tips.tick();
+        }
+    }
+    // Win32 can re-enter this callback during native calls and the selection loop.
+    let Ok(mut app) = (&*p).app.try_borrow_mut() else {
+        if msg == WM_DESTROY {
+            KillTimer(hwnd, 1);
+            PostQuitMessage(0);
+        }
+        return DefWindowProcW(hwnd, msg, w, l);
+    };
+    match msg {
+        WM_COMMAND => {
+            let id = w & 0xffff;
+            let notification = w >> 16;
+            if id == 108 && notification == 1 {
+                let selected = SendMessageW(app.selector, 0x147, 0, 0);
+                if selected >= 0 {
+                    app.settings.selected = selected as usize;
+                    app.manual_preview = false;
+                    let _ = app.persist();
+                    app.preview();
+                }
+                return 0;
+            }
+            if notification != 0 {
+                return DefWindowProcW(hwnd, msg, w, l);
+            }
+            match id {
+                101 => {
+                    if app.settings.selections.len() >= MAX_REGIONS {
+                        app.status(&format!("最多支持 {MAX_REGIONS} 个选区"));
+                        return 0;
+                    }
+                    let resume = !app.workers.is_empty();
+                    app.halt();
+                    app.manual_preview = false;
+                    match choose_roi(hwnd) {
+                        Ok(Some(selection)) => {
+                            app.settings.selections.push(selection);
+                            let count = app.settings.selections.len();
+                            app.settings.names.resize(count, String::new());
+                            app.settings.selected = app.settings.selections.len() - 1;
+                            app.rebuild_selector();
+                            if let Err(e) = app.persist() {
+                                app.status(&format!("选区已添加，但保存失败：{e}"));
+                            } else {
+                                app.preview();
+                            }
+                        }
+                        Ok(None) => app.status("已取消添加，原选区保留。"),
+                        Err(e) => app.status(&e),
+                    }
+                    if resume {
+                        if let Err(e) = app.start() {
+                            app.status(&e);
+                        }
+                    }
+                }
+                102 => {
+                    if !app.workers.is_empty() {
+                        app.halt();
+                        app.status("已暂停，浮动标签已隐藏。");
+                        app.content("可继续添加选区，或使用下方查询。", None, None);
+                    } else if let Err(e) = app.start() {
+                        app.status(&e);
+                    }
+                }
+                103 => {
+                    let resume = !app.workers.is_empty();
+                    app.halt();
+                    app.manual_preview = false;
+                    if !app.settings.selections.is_empty() {
+                        let index = app.settings.selected;
+                        app.settings.selections.remove(index);
+                        if index < app.settings.names.len() {
+                            app.settings.names.remove(index);
+                        }
+                        app.settings.selected =
+                            index.min(app.settings.selections.len().saturating_sub(1));
+                    }
+                    app.rebuild_selector();
+                    if let Err(e) = app.persist() {
+                        app.status(&e);
+                    } else {
+                        app.preview();
+                    }
+                    if resume && !app.settings.selections.is_empty() {
+                        if let Err(e) = app.start() {
+                            app.status(&e);
+                        }
+                    }
+                }
+                110 => {
+                    let index = app.settings.selected;
+                    let Some(selected) = app.settings.selections.get(index).copied() else {
+                        app.status("请先添加或选择一个选区。");
+                        return 0;
+                    };
+                    let name = app.settings.name(index);
+                    let others = app
+                        .settings
+                        .selections
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, s)| {
+                            *i != index && (s.width, s.height) == (selected.width, selected.height)
+                        })
+                        .map(|(_, s)| s.roi)
+                        .collect();
+                    let resume = !app.workers.is_empty();
+                    app.halt();
+                    match selection_edit::edit(hwnd, selected, name, others) {
+                        Ok(Some(selection)) => {
+                            app.settings.selections[index] = selection;
+                            if let Err(e) = app.persist() {
+                                app.status(&e);
+                            } else {
+                                app.status("选区位置和大小已保存。");
+                            }
+                        }
+                        Ok(None) => app.status("已取消修改，保留原选区。"),
+                        Err(e) => app.status(&e),
+                    }
+                    if resume {
+                        if let Err(e) = app.start() {
+                            app.status(&e);
+                        }
+                    }
+                }
+                109 => {
+                    let name = get_text(app.selector);
+                    let index = app.settings.selected;
+                    match app.settings.rename(index, &name) {
+                        Ok(()) => {
+                            app.rebuild_selector();
+                            if let Err(e) = app.persist() {
+                                app.status(&e);
+                            } else {
+                                app.status("选区名称已保存；留空可恢复默认名称。");
+                            }
+                        }
+                        Err(e) => app.status(&e),
+                    }
+                }
+                107 => {
+                    app.halt();
+                    app.manual_preview = false;
+                    app.settings.selections.clear();
+                    app.settings.names.clear();
+                    app.settings.selected = 0;
+                    app.rebuild_selector();
+                    app.content("请添加新的识别区域。", None, None);
+                    if let Err(e) = app.persist() {
+                        app.status(&e);
+                    } else {
+                        app.status("所有选区已清空并保存。");
+                    }
+                }
+                106 => {
+                    if let Some(candidate) = app.suggestion.clone() {
+                        if let Ok(mut aliases) = app.confirmed.lock() {
+                            aliases.insert(candidate.observed.clone(), candidate.id);
+                        }
+                        app.content("已确认，下次识别到相同文字时会使用这个物种。", None, None);
+                        app.status("已记住本次确认；仅在本次运行中有效。");
+                    }
+                }
+                104 => {
+                    app.manual_preview = true;
+                    let data = species_data();
+                    match lookup_query(&get_text(app.edit), &data) {
+                        MatchResult::Found(id) => {
+                            app.content(
+                                "",
+                                Some(hint_card(data.iter().find(|s| s.id == id).unwrap())),
+                                None,
+                            );
+                            app.status("手动查询结果；选择选区可返回实时信息。");
+                        }
+                        _ => {
+                            app.content(
+                                "未找到唯一匹配，请输入中文名或 1–649 全国编号。",
+                                None,
+                                None,
+                            );
+                            app.status("手动查询未匹配");
+                        }
+                    }
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_TIMER => {
+            let mut updates = Vec::new();
+            if let Some(rx) = &app.rx {
+                while let Ok(update) = rx.try_recv() {
+                    updates.push(update);
+                }
+            }
+            let mut refresh = false;
+            for update in updates {
+                if update.deferred {
+                    continue;
+                }
+                let index = update.index;
+                if let Some(slot) = app.slots.get_mut(index) {
+                    slot.last = Some(update);
+                    slot.updated = Instant::now();
+                    refresh |= index == app.settings.selected;
+                }
+            }
+            if refresh {
+                app.preview();
+            }
+            app.sync_overlays();
+            0
+        }
+        0x232 => {
+            if let Err(e) = app.persist() {
+                app.status(&e);
+            }
+            0
+        }
+        WM_DESTROY => {
+            let _ = app.persist();
+            app.halt();
+            KillTimer(hwnd, 1);
+            PostQuitMessage(0);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
+// Thin wrapper around CreateWindowExW; keep the native coordinates explicit.
+#[allow(clippy::too_many_arguments)]
+unsafe fn control(
+    parent: Handle,
+    kind: &str,
+    text: &str,
+    style: u32,
+    id: isize,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Handle {
+    let hwnd = CreateWindowExW(
+        0,
+        wide(kind).as_ptr(),
+        wide(text).as_ptr(),
+        0x50000000 | style | if kind == "BUTTON" { 0x0001000b } else { 0 },
+        x,
+        y,
+        width,
+        height,
+        parent,
+        id,
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if hwnd != 0 {
+        SendMessageW(hwnd, 0x30, GetStockObject(17) as usize, 1);
+    }
+    hwnd
+}
+// Win32 MAKEINTRESOURCEW uses a low-word resource ID, not a dereferenceable pointer.
+fn integer_resource(id: u16) -> *const u16 {
+    id as usize as *const u16
+}
+unsafe fn register(name: &str, proc: Proc) -> Result<(), String> {
+    let name = wide(name);
+    let c = WndClass {
+        style: 3,
+        proc: Some(proc),
+        cls_extra: 0,
+        wnd_extra: 0,
+        instance: GetModuleHandleW(null()),
+        icon: LoadImageW(
+            GetModuleHandleW(null()),
+            integer_resource(1),
+            1,
+            0,
+            0,
+            0x8040,
+        ),
+        cursor: LoadCursorW(0, 32512usize as *const u16),
+        brush: 6,
+        menu: null(),
+        class: name.as_ptr(),
+    };
+    if RegisterClassW(&c) == 0 {
+        return Err(format!("注册窗口失败：{}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+pub fn run() -> Result<(), String> {
+    unsafe {
+        SetProcessDpiAwarenessContext(-4);
+        register("PokeMMOHintWindow", main_proc)?;
+        register("PokeMMOHintSelect", select_proc)?;
+        register("PokeMMOHintOverlay", overlay::window_proc)?;
+        register("PokeMMOHintEditRegion", selection_edit::window_proc)?;
+        register("PokeMMOHintButtonTip", tooltips::window_proc)?;
+        let (settings, load_error) = load_settings();
+        let hwnd = CreateWindowExW(
+            0x8,
+            wide("PokeMMOHintWindow").as_ptr(),
+            wide("PokeMMO 属性提示").as_ptr(),
+            0x02CA0000,
+            100,
+            100,
+            620,
+            310,
+            0,
+            0,
+            GetModuleHandleW(null()),
+            null(),
+        );
+        if hwnd == 0 {
+            return Err(format!("创建窗口失败：{}", std::io::Error::last_os_error()));
+        }
+        let dpi = GetDpiForWindow(hwnd).max(96);
+        for (kind, size) in [(0, GetSystemMetrics(49)), (1, GetSystemMetrics(11))] {
+            let icon = LoadImageW(
+                GetModuleHandleW(null()),
+                integer_resource(1),
+                1,
+                size,
+                size,
+                0x8000,
+            );
+            if icon != 0 {
+                SendMessageW(hwnd, 0x80, kind, icon);
+            }
+        }
+        let mut bounds = Rect {
+            left: 0,
+            top: 0,
+            right: paint::px(620, dpi),
+            bottom: paint::px(480, dpi),
+        };
+        AdjustWindowRectExForDpi(&mut bounds, 0x02ca0000, 0, 0x8, dpi);
+        SetWindowPos(
+            hwnd,
+            -1,
+            0,
+            0,
+            bounds.right - bounds.left,
+            bounds.bottom - bounds.top,
+            0x12,
+        );
+        let mut app = Box::new(App {
+            hwnd,
+            status: "框选一行名字或 No.编号，然后开始识别。".to_owned(),
+            body: "也可以在下方输入中文名字或全国编号查询。".to_owned(),
+            card: None,
+            suggestion: None,
+            confirm: 0,
+            theme: Rc::new(paint::Theme::new(dpi)),
+            dpi,
+            confirmed: Arc::new(Mutex::new(HashMap::new())),
+            edit: 0,
+            start: 0,
+            settings,
+            selector: 0,
+            slots: Vec::new(),
+            details: None,
+            hovered: None,
+            last_hover: Instant::now(),
+            occlusions: Arc::new(Mutex::new(Vec::new())),
+            manual_preview: false,
+            rx: None,
+            stop: Arc::new(AtomicBool::new(true)),
+            workers: Vec::new(),
+        });
+        let px = |value| paint::px(value, dpi);
+        app.start = control(
+            hwnd,
+            "BUTTON",
+            "开始识别",
+            0,
+            102,
+            px(20),
+            px(58),
+            px(44),
+            px(36),
+        );
+        control(
+            hwnd,
+            "BUTTON",
+            "添加选区",
+            0,
+            101,
+            px(74),
+            px(58),
+            px(44),
+            px(36),
+        );
+        control(
+            hwnd,
+            "BUTTON",
+            "删除当前选区",
+            0,
+            103,
+            px(128),
+            px(58),
+            px(44),
+            px(36),
+        );
+        control(
+            hwnd,
+            "BUTTON",
+            "清空选区",
+            0,
+            107,
+            px(182),
+            px(58),
+            px(44),
+            px(36),
+        );
+        app.edit = control(
+            hwnd,
+            "EDIT",
+            "",
+            0x00810080,
+            105,
+            px(20),
+            px(436),
+            px(170),
+            px(32),
+        );
+        SendMessageW(app.edit, 0x30, app.theme.body as usize, 1);
+        SendMessageW(app.edit, 0x1501, 0, wide("名字或编号").as_ptr() as isize);
+        control(
+            hwnd,
+            "BUTTON",
+            "查询",
+            0,
+            104,
+            px(200),
+            px(435),
+            px(44),
+            px(34),
+        );
+        app.confirm = control(
+            hwnd,
+            "BUTTON",
+            "确认候选",
+            0,
+            106,
+            px(254),
+            px(435),
+            px(44),
+            px(34),
+        );
+        ShowWindow(app.confirm, 0);
+        app.selector = control(
+            hwnd,
+            "COMBOBOX",
+            "",
+            0x00210042,
+            108,
+            px(20),
+            px(101),
+            px(200),
+            px(250),
+        );
+        SendMessageW(app.selector, 0x30, app.theme.body as usize, 1);
+        SendMessageW(app.selector, 0x141, 32, 0);
+        control(
+            hwnd,
+            "BUTTON",
+            "保存名称",
+            0,
+            109,
+            px(266),
+            px(100),
+            px(36),
+            px(30),
+        );
+        control(
+            hwnd,
+            "BUTTON",
+            "查看并调整当前选区",
+            0,
+            110,
+            px(224),
+            px(100),
+            px(36),
+            px(30),
+        );
+        let mut tooltips = tooltips::Tooltips::new(hwnd, app.theme.clone(), dpi);
+        for id in [102, 101, 103, 107, 104, 106, 110, 109] {
+            tooltips.add(GetDlgItem(hwnd, id));
+        }
+        app.rebuild_selector();
+        if let Some((x, y)) = app.settings.window {
+            let screen = overlay::screen_for(Bounds {
+                x,
+                y,
+                width: 1,
+                height: 1,
+            });
+            let left = x.clamp(
+                screen.x,
+                (screen.x + screen.width - (bounds.right - bounds.left)).max(screen.x),
+            );
+            let top = y.clamp(
+                screen.y,
+                (screen.y + screen.height - (bounds.bottom - bounds.top)).max(screen.y),
+            );
+            SetWindowPos(hwnd, -1, left, top, 0, 0, 0x11);
+        }
+        app.status = load_error.unwrap_or_else(|| {
+            format!(
+                "已恢复 {} 个选区；点击开始可持续识别。",
+                app.settings.selections.len()
+            )
+        });
+        let app = Box::new(UiContext {
+            tooltips: RefCell::new(tooltips),
+            theme: app.theme.clone(),
+            dpi: app.dpi,
+            app: RefCell::new(*app),
+        });
+        SetWindowLongPtrW(hwnd, USER_DATA, &*app as *const UiContext as isize);
+        SetTimer(hwnd, 1, 150, null());
+        ShowWindow(hwnd, 5);
+        let mut msg = Msg::default();
+        loop {
+            let ret = GetMessageW(&mut msg, 0, 0, 0);
+            if ret == 0 {
+                break;
+            }
+            if ret < 0 {
+                return Err("读取窗口消息失败".to_owned());
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        app.app.borrow_mut().halt();
+        Ok(())
+    }
+}
+
+struct SelectState {
+    start: Option<Point>,
+    current: Point,
+    result: Option<Rect>,
+    origin: Point,
+}
+unsafe extern "system" fn select_proc(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize {
+    if !matches!(msg, 0x201 | 0x200 | 0x202 | 0x100 | WM_PAINT) {
+        return DefWindowProcW(hwnd, msg, w, l);
+    }
+    let p = GetWindowLongPtrW(hwnd, USER_DATA) as *mut SelectState;
+    if p.is_null() {
+        return DefWindowProcW(hwnd, msg, w, l);
+    }
+    let state = &mut *p;
+    let mouse = Point {
+        x: (l as u32 & 0xffff) as u16 as i16 as i32,
+        y: ((l as u32 >> 16) & 0xffff) as u16 as i16 as i32,
+    };
+    match msg {
+        0x201 => {
+            state.start = Some(mouse);
+            state.current = mouse;
+            SetCapture(hwnd);
+            0
+        }
+        0x200 => {
+            state.current = mouse;
+            if state.start.is_some() {
+                InvalidateRect(hwnd, null(), 1);
+            }
+            0
+        }
+        0x202 => {
+            ReleaseCapture();
+            if let Some(start) = state.start {
+                state.result = Some(Rect {
+                    left: start.x.min(mouse.x) + state.origin.x,
+                    top: start.y.min(mouse.y) + state.origin.y,
+                    right: start.x.max(mouse.x) + state.origin.x,
+                    bottom: start.y.max(mouse.y) + state.origin.y,
+                });
+            }
+            DestroyWindow(hwnd);
+            0
+        }
+        0x100 if w == 27 => {
+            DestroyWindow(hwnd);
+            0
+        }
+        WM_PAINT => {
+            let mut paint = Paint::default();
+            let dc = BeginPaint(hwnd, &mut paint);
+            let mut r = Rect::default();
+            GetClientRect(hwnd, &mut r);
+            FillRect(dc, &r, GetStockObject(4));
+            SetTextColor(dc, 0xffffff);
+            SetBkMode(dc, 1);
+            let text = wide("拖动框选一只宝可梦的名字或 No.编号，松开完成；Esc 取消。");
+            r.top += 20;
+            DrawTextW(dc, text.as_ptr(), -1, &mut r, 1 | 0x800);
+            if let Some(start) = state.start {
+                let pen = CreatePen(0, 3, 0x00ffff00);
+                let old = SelectObject(dc, pen);
+                let brush = SelectObject(dc, GetStockObject(5));
+                Rectangle(
+                    dc,
+                    start.x.min(state.current.x),
+                    start.y.min(state.current.y),
+                    start.x.max(state.current.x),
+                    start.y.max(state.current.y),
+                );
+                SelectObject(dc, brush);
+                SelectObject(dc, old);
+                DeleteObject(pen);
+            }
+            EndPaint(hwnd, &paint);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
+    let game = game_window()?;
+    let (width, height) = client_size(game)?;
+    ShowWindow(parent, 0);
+    let origin = Point {
+        x: GetSystemMetrics(76),
+        y: GetSystemMetrics(77),
+    };
+    let hwnd = CreateWindowExW(
+        0x88 | 0x80000,
+        wide("PokeMMOHintSelect").as_ptr(),
+        wide("选择名字区域").as_ptr(),
+        0x80000000,
+        origin.x,
+        origin.y,
+        GetSystemMetrics(78),
+        GetSystemMetrics(79),
+        0,
+        0,
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if hwnd == 0 {
+        ShowWindow(parent, 5);
+        return Err("无法创建框选窗口".to_owned());
+    }
+    let mut state = Box::new(SelectState {
+        start: None,
+        current: Point::default(),
+        result: None,
+        origin,
+    });
+    SetWindowLongPtrW(hwnd, USER_DATA, &mut *state as *mut SelectState as isize);
+    SetLayeredWindowAttributes(hwnd, 0, 150, 2);
+    ShowWindow(hwnd, 5);
+    let mut msg = Msg::default();
+    while IsWindow(hwnd) != 0 {
+        let ret = GetMessageW(&mut msg, 0, 0, 0);
+        if ret <= 0 {
+            if ret == 0 {
+                PostQuitMessage(0);
+            }
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if IsWindow(hwnd) != 0 {
+        DestroyWindow(hwnd);
+    }
+    ShowWindow(parent, 5);
+    if let Some(r) = state.result {
+        let mut p = Point {
+            x: r.left,
+            y: r.top,
+        };
+        if ScreenToClient(game, &mut p) == 0 {
+            return Err("游戏窗口已失效".to_owned());
+        }
+        let roi = Roi {
+            x: p.x,
+            y: p.y,
+            width: r.right - r.left,
+            height: r.bottom - r.top,
+        }
+        .validate(width, height)?;
+        return Ok(Some(Selection { roi, width, height }));
+    }
+    Ok(None)
+}
+
+fn settings_directory() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("PokeMMOHint"))
+}
+fn save_settings(settings: &RegionSettings) -> Result<(), String> {
+    let directory = settings_directory().ok_or("无法取得本地配置目录")?;
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let path = directory.join("regions.txt");
+    let temporary = directory.join("regions.tmp");
+    std::fs::write(&temporary, settings.encode()).map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+fn load_settings() -> (RegionSettings, Option<String>) {
+    let Some(directory) = settings_directory() else {
+        return (
+            RegionSettings::default(),
+            Some("无法取得本地配置目录".to_owned()),
+        );
+    };
+    let path = if directory.join("regions.txt").exists() {
+        directory.join("regions.txt")
+    } else {
+        directory.join("roi.txt")
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => match RegionSettings::parse(&text) {
+            Ok(settings) => (settings, None),
+            Err(e) => (
+                RegionSettings::default(),
+                Some(format!("选区读取失败：{e}")),
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (RegionSettings::default(), None),
+        Err(e) => (
+            RegionSettings::default(),
+            Some(format!("选区读取失败：{e}")),
+        ),
+    }
+}
+
+unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
+    let width = r.right - r.left;
+    let height = r.bottom - r.top;
+    let vx = GetSystemMetrics(76);
+    let vy = GetSystemMetrics(77);
+    if r.left < vx
+        || r.top < vy
+        || r.right > vx + GetSystemMetrics(78)
+        || r.bottom > vy + GetSystemMetrics(79)
+    {
+        return Err("识别区域超出屏幕，请把游戏移回屏幕内".to_owned());
+    }
+    let source = GetDC(0);
+    if source == 0 {
+        return Err("无法取得屏幕画面".to_owned());
+    }
+    let dest = CreateCompatibleDC(source);
+    if dest == 0 {
+        ReleaseDC(0, source);
+        return Err("无法创建截图缓冲".to_owned());
+    }
+    let info = BitmapInfo {
+        header: BitmapHeader {
+            size: 40,
+            width,
+            height: -height,
+            planes: 1,
+            bits: 32,
+            ..Default::default()
+        },
+        colors: [0],
+    };
+    let mut pixels = null_mut();
+    let bitmap = CreateDIBSection(source, &info, 0, &mut pixels, 0, 0);
+    if bitmap == 0 || pixels.is_null() {
+        DeleteDC(dest);
+        ReleaseDC(0, source);
+        return Err("无法分配截图缓冲".to_owned());
+    }
+    let previous = SelectObject(dest, bitmap);
+    let ok = BitBlt(
+        dest,
+        0,
+        0,
+        width,
+        height,
+        source,
+        r.left,
+        r.top,
+        0x00cc0020 | 0x40000000,
+    );
+    GdiFlush();
+    let result = if ok != 0 {
+        Ok(std::slice::from_raw_parts(pixels as *const u8, (width * height * 4) as usize).to_vec())
+    } else {
+        Err("截取画面失败，请用窗口或无边框模式".to_owned())
+    };
+    SelectObject(dest, previous);
+    DeleteObject(bitmap);
+    DeleteDC(dest);
+    ReleaseDC(0, source);
+    result
+}
+
+struct Scratch {
+    directory: PathBuf,
+    image: PathBuf,
+    alternate: PathBuf,
+    words: PathBuf,
+}
+impl Scratch {
+    fn create() -> Result<Self, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pokemmo-hint-{}-{stamp}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        let scratch = Self {
+            image: directory.join("capture.bmp"),
+            alternate: directory.join("alternate.bmp"),
+            words: directory.join("species-words.txt"),
+            directory,
+        };
+        let words = species_data()
+            .into_iter()
+            .map(|s| s.name)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&scratch.words, words).map_err(|e| e.to_string())?;
+        Ok(scratch)
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        for path in [&self.image, &self.alternate, &self.words] {
+            let _ = std::fs::remove_file(path);
+        }
+        let _ = std::fs::remove_dir(&self.directory);
+    }
+}
+struct WorkerContext {
+    config: OcrConfig,
+    own: Handle,
+    stop: Arc<AtomicBool>,
+    tx: mpsc::Sender<Update>,
+    confirmed: Arc<Mutex<HashMap<String, u16>>>,
+    occlusions: Arc<Mutex<Vec<Rect>>>,
+}
+fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
+    let WorkerContext {
+        config,
+        own,
+        stop,
+        tx,
+        confirmed,
+        occlusions,
+    } = context;
+    let scratch = match Scratch::create() {
+        Ok(s) => s,
+        Err(e) => {
+            for (index, _) in &selections {
+                let _ = tx.send(Update {
+                    index: *index,
+                    deferred: false,
+                    status: e.clone(),
+                    body: "尚未识别".to_owned(),
+                    card: None,
+                    suggestion: None,
+                });
+            }
+            return;
+        }
+    };
+    let data = species_data();
+    let mut trackers: Vec<Tracker> = selections.iter().map(|_| Tracker::default()).collect();
+    while !stop.load(Ordering::Relaxed) {
+        for ((index, selected), tracker) in selections.iter().zip(trackers.iter_mut()) {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let mut deferred = false;
+            let result = (|| -> Result<pokemmo_hint::ReadDecision, String> {
+                let pixels = unsafe {
+                    let game = game_window()?;
+                    if client_size(game)? != (selected.width, selected.height) {
+                        return Err("游戏尺寸改变，请暂停后重新框选。".to_owned());
+                    }
+                    let foreground = GetForegroundWindow();
+                    if foreground != game && foreground != own {
+                        return Err("游戏不在前台，识别已暂缓。".to_owned());
+                    }
+                    let region = screen_rect(game, selected.roi)?;
+                    let mut own_rect = Rect::default();
+                    if IsIconic(own) == 0
+                        && GetWindowRect(own, &mut own_rect) != 0
+                        && intersects(region, own_rect)
+                    {
+                        return Err("提示窗口挡住了识别区域，请拖开或最小化。".to_owned());
+                    }
+                    if occlusions
+                        .lock()
+                        .map_err(|_| "浮窗位置不可用")?
+                        .iter()
+                        .any(|r| intersects(region, *r))
+                    {
+                        deferred = true;
+                        return Err("浮动信息卡遮挡，暂缓读取此选区".to_owned());
+                    }
+                    capture(region)?
+                };
+                std::fs::write(
+                    &scratch.image,
+                    ocr_bitmap(&pixels, selected.roi.width, selected.roi.height),
+                )
+                .map_err(|e| e.to_string())?;
+                let raw =
+                    config.recognize_with_words(&scratch.image, &stop, Some(&scratch.words))?;
+                let aliases = confirmed.lock().map_err(|_| "确认记录不可用")?.clone();
+                let mut reads = vec![raw];
+                let mut decision = resolve_reads(&reads, &data, &aliases);
+                if decision.result == MatchResult::Unknown && !stop.load(Ordering::Relaxed) {
+                    std::fs::write(
+                        &scratch.alternate,
+                        binary_bitmap(&pixels, selected.roi.width, selected.roi.height),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    if let Ok(alternate) =
+                        config.recognize_with_words(&scratch.alternate, &stop, Some(&scratch.words))
+                    {
+                        reads.push(alternate);
+                        decision = resolve_reads(&reads, &data, &aliases);
+                    }
+                }
+                Ok(decision)
+            })();
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let update = match result {
+                Ok(decision) => {
+                    let stable = tracker.update(&decision.result);
+                    let card = stable
+                        .and_then(|id| data.iter().find(|s| s.id == id))
+                        .map(hint_card);
+                    let body = if card.is_some() {
+                        String::new()
+                    } else if let Some(suggestion) = &decision.suggestion {
+                        let name = data
+                            .iter()
+                            .find(|s| s.id == suggestion.id)
+                            .map(|s| s.name.as_str())
+                            .unwrap_or("");
+                        format!(
+                            "识别文字：{}\r\n可能是「{}」。确认后，本次运行会记住这个读法。",
+                            suggestion.observed, name
+                        )
+                    } else {
+                        match decision.result {
+                            MatchResult::Found(_) => "发现物种，正在等待下一次一致结果…".to_owned(),
+                            MatchResult::Unknown => {
+                                "没有匹配到名字或编号。\r\n请只框文字那一行，并在四周稍留空隙。"
+                                    .to_owned()
+                            }
+                            MatchResult::Ambiguous => "识别到多个候选，请缩小识别区域。".to_owned(),
+                            MatchResult::Conflict => "编号与名字不一致，请重新识别。".to_owned(),
+                        }
+                    };
+                    let preview: String = decision
+                        .raw
+                        .chars()
+                        .take(80)
+                        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                        .collect();
+                    let status = format!(
+                        "识别文字：{}{}",
+                        preview,
+                        if decision.corrected {
+                            " · 使用已确认读法"
+                        } else {
+                            ""
+                        }
+                    );
+                    Update {
+                        index: *index,
+                        deferred: false,
+                        status,
+                        body,
+                        card,
+                        suggestion: decision.suggestion,
+                    }
+                }
+                Err(error) => {
+                    if !deferred {
+                        tracker.update(&MatchResult::Unknown);
+                    }
+                    Update {
+                        index: *index,
+                        deferred,
+                        status: error,
+                        body: "暂无可靠结果".to_owned(),
+                        card: None,
+                        suggestion: None,
+                    }
+                }
+            };
+            if tx.send(update).is_err() {
+                return;
+            }
+        }
+        for _ in 0..10 {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+}

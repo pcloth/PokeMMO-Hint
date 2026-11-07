@@ -1,0 +1,26 @@
+PokeMMO Hint - Third-party components
+
+1. Simplified Chinese OCR model (chi_sim.traineddata)
+   Upstream: https://github.com/tesseract-ocr/tessdata_fast
+   Download: https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata
+   License: Apache License 2.0; full text in licenses/tessdata-fast-LICENSE.txt.
+   The model is distributed without modification. Its SHA-256 is recorded in release.json.
+
+2. Tesseract OCR engine
+   This lightweight release does NOT redistribute the engine or its DLL dependencies.
+   install-ocr.ps1 installs UB-Mannheim.TesseractOCR through the Windows package manager,
+   or uses an existing local installation. That separately installed distribution supplies
+   its own license materials and notices.
+   https://tesseract-ocr.github.io/tessdoc/Installation.html
+   https://github.com/UB-Mannheim/tesseract/wiki
+
+3. Species facts
+   The included table contains national numbers 1-649, Chinese species names and base
+   elemental types. It contains no ROM, game code, artwork, dialogue, saves or game client.
+   Alternate forms are not independently supported. The publisher must not include ROMs.
+
+4. Application artwork
+   The app icon and toolbar artwork were generated with imagegen. The source repository
+   retains the original PNG files, icon sizes and generation prompts.
+
+This helper is an independent application, not an official PokeMMO or Pokemon product.

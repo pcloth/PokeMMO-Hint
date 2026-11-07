@@ -1,0 +1,112 @@
+{
+  "date": "2026-11-07",
+  "engine": "Tesseract 5.3.4 Linux C API",
+  "model_sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+  "psm": 7,
+  "user_words": false,
+  "source": "User-provided screenshot of Serperior summary and OCR window; original screenshot is not copied into the repository.",
+  "scope": "Three crops from one screenshot; evidence for this sample, not a general accuracy benchmark or Windows runtime validation.",
+  "new_preprocessing": "Repository Rust bitmap.rs compiled into a temporary test driver: 4x bilinear, luminance polarity normalization, white border.",
+  "old_preprocessing": "3x nearest neighbour; RGB min>=160 and max-min<=80 -> black, else white.",
+  "results": [
+    {
+      "sample": "detail-tight",
+      "crop": [
+        140,
+        84,
+        215,
+        106
+      ],
+      "mode": "old",
+      "text": "君主性"
+    },
+    {
+      "sample": "detail-tight",
+      "crop": [
+        140,
+        84,
+        215,
+        106
+      ],
+      "mode": "gray",
+      "text": "君主蛇"
+    },
+    {
+      "sample": "detail-tight",
+      "crop": [
+        140,
+        84,
+        215,
+        106
+      ],
+      "mode": "binary",
+      "text": "君主此"
+    },
+    {
+      "sample": "detail-wide",
+      "crop": [
+        139,
+        80,
+        263,
+        108
+      ],
+      "mode": "old",
+      "text": "君主蛇           双"
+    },
+    {
+      "sample": "detail-wide",
+      "crop": [
+        139,
+        80,
+        263,
+        108
+      ],
+      "mode": "gray",
+      "text": "君主蛇            园"
+    },
+    {
+      "sample": "detail-wide",
+      "crop": [
+        139,
+        80,
+        263,
+        108
+      ],
+      "mode": "binary",
+      "text": "君主蛇             吉"
+    },
+    {
+      "sample": "green-name",
+      "crop": [
+        308,
+        40,
+        361,
+        59
+      ],
+      "mode": "old",
+      "text": "君主蛇"
+    },
+    {
+      "sample": "green-name",
+      "crop": [
+        308,
+        40,
+        361,
+        59
+      ],
+      "mode": "gray",
+      "text": "君主蛇 |"
+    },
+    {
+      "sample": "green-name",
+      "crop": [
+        308,
+        40,
+        361,
+        59
+      ],
+      "mode": "binary",
+      "text": "君主眩"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "tool": "built-in image_gen.imagegen",
+  "prompt": "Use case: logo-brand. Asset type: production toolbar icon sprite sheet for a Windows Pokémon OCR helper, matching a modern navy-outline blue-and-gold app icon. Generate ONE square transparent PNG sheet with EXACTLY 3 columns and 3 rows of equal square cells, perfectly regular grid, no gaps between cells, no visible grid. Each cell holds ONE isolated bold simple pictogram centered with at least 20 percent empty margin. Same dark navy thick rounded outlines, light cyan fill, subtle dimensional shading, small golden accents, consistent scale and visual weight. All icons remain clear when reduced to 24 pixels. Row 1 left to right: PLAY triangle (start), PAUSE two vertical bars, selection dashed rectangle with PLUS (add region). Row 2 left to right: TRASH CAN (delete region), broom sweeping with small sparkles (clear all), MAGNIFYING GLASS (search). Row 3 left to right: CHECK MARK inside circle (confirm), dashed selection rectangle with FOUR-DIRECTION MOVE ARROWS (view and adjust region), FLOPPY DISK (save name). No text, letters, numbers, labels, watermark, background tile, extra icons, or illustration outside the nine cells. Transparent background in all blank areas.",
+  "source": "toolbar-sheet.png",
+  "layout": "3 x 3 equal cells, row-major",
+  "icons": [
+    "play",
+    "pause",
+    "add",
+    "delete",
+    "clear",
+    "search",
+    "confirm",
+    "adjust",
+    "save"
+  ],
+  "resource_groups": [
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18
+  ],
+  "sizes": [
+    24,
+    32,
+    48,
+    64
+  ],
+  "conversion": "Equal-cell extraction from generated transparent sprite sheet, standard ICO conversion/resampling; no redrawn artwork."
+}

@@ -1,0 +1,16 @@
+{
+  "tool": "built-in image_gen.imagegen",
+  "prompt": "Use case: logo-brand. Asset type: Windows desktop application icon for a local Pokémon species OCR and elemental weakness lookup assistant. Create ONE polished square icon, 1024x1024, centered bold simple silhouette: a red-and-white monster capture ball integrated with a compact magnifying-glass / scan lens, and one small gold lightning-bolt accent conveying type weakness. Modern friendly desktop utility aesthetic, restrained soft dimensional shading, thick dark navy outlines, very few large shapes that remain legible at 16 and 32 pixels. Generous safe padding around the silhouette, transparent background outside the icon. No letters, numbers, captions, watermark, tiny decoration, interface mockup, or multiple icon variants.",
+  "source": "app-icon.png",
+  "windows_icon": "app.ico",
+  "sizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "conversion": "Pillow ICO format conversion and standard icon-size resampling; generated artwork and alpha preserved."
+}

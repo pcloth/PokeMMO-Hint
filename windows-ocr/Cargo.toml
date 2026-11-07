@@ -1,0 +1,14 @@
+[package]
+name = "pokemmo-hint"
+version = "0.4.1"
+edition = "2021"
+description = "Local screenshot OCR and basic type hints for PokeMMO"
+
+[features]
+# Type-check the native Windows adapter from a non-Windows development host.
+windows-check = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
