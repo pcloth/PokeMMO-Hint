@@ -123,6 +123,7 @@ try {
     foreach ($name in @('README.txt')) {
         Write-Utf8 -Path (Join-Path $package $name) -Text (Get-Content -LiteralPath (Join-Path $projectDir "release\$name") -Raw -Encoding UTF8) -Bom
     }
+    Copy-Item -LiteralPath (Join-Path $repoDir 'docs\assets\quick-start-zh-CN.png') -Destination (Join-Path $package 'Quick-Start-zh-CN.png')
     Copy-Item -LiteralPath (Join-Path $projectDir 'THIRD_PARTY_NOTICES.txt') -Destination $package
     Copy-Item -LiteralPath (Join-Path $projectDir 'licenses\paddle-LICENSE.txt') -Destination (Join-Path $package 'licenses')
     $metadata = [ordered]@{

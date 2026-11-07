@@ -18,6 +18,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_window
 PokeMMO-Hint-v0.7.0-windows-x64/
   pokemmo-hint.exe
   README.txt
+  Quick-Start-zh-CN.png
   release.json
   SHA256SUMS.txt
   THIRD_PARTY_NOTICES.txt

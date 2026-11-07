@@ -1,6 +1,7 @@
 PokeMMO 属性提示 0.7 — Windows x64
 
 解压 ZIP，双击 pokemmo-hint.exe，无需 Rust、ROM 或编译器。
+快速上手图解见同目录 Quick-Start-zh-CN.png。
 本版不再附带 Tesseract，也不随包分发模型或额外推理引擎。
 
 识别设置

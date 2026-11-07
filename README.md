@@ -4,6 +4,8 @@
 
 覆盖全国编号 1–649 的基础形态，尚不支持不同形态独立识别、特性／道具修正或实时队伍评分。Android 尚未实现。旧原生 Mod 实验文件已清理。
 
+![使用帮助：添加选区、开始识别、悬停查看详情](docs/assets/quick-start-zh-CN.png)
+
 ## 开发运行
 
 Windows PowerShell，项目根目录：
