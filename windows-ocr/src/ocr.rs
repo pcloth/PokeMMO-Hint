@@ -1,4 +1,5 @@
 use std::{path::Path, path::PathBuf, process::Command, sync::atomic::AtomicBool, time::Duration};
+use pokemmo_hint::Language;
 
 #[cfg(not(windows))]
 use std::{process::Stdio, sync::atomic::Ordering, time::Instant};
@@ -11,13 +12,14 @@ impl OcrProcess {
         alternate: Option<&Path>,
         script: &Path,
         cancelled: &AtomicBool,
+        language: Language,
     ) -> Result<String, String> {
         let shell = std::env::var_os("SystemRoot")
             .map(PathBuf::from)
-            .ok_or("WINDOWS_CHINESE_OCR_UNAVAILABLE")?
+            .ok_or("WINDOWS_OCR_UNAVAILABLE")?
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
         if !shell.is_file() {
-            return Err("WINDOWS_CHINESE_OCR_UNAVAILABLE".to_owned());
+            return Err("WINDOWS_OCR_UNAVAILABLE".to_owned());
         }
         let mut command = Command::new(shell);
         command
@@ -29,6 +31,8 @@ impl OcrProcess {
                 "-File",
             ])
             .arg(script)
+            .arg("-Language")
+            .arg(language.windows_tag())
             .arg("-ImagePath")
             .arg(image);
         if let Some(alternate) = alternate {
@@ -109,7 +113,7 @@ impl OcrProcess {
 #[cfg(any(windows, feature = "windows-check"))]
 #[derive(Clone)]
 pub enum Backend {
-    Windows,
+    Windows(Language),
     Paddle(PathBuf),
 }
 #[cfg(any(windows, feature = "windows-check"))]
@@ -117,11 +121,11 @@ impl Backend {
     pub fn selected(settings: pokemmo_hint::engines::EngineSettings) -> Result<Self, String> {
         use pokemmo_hint::engines::{assets_dir, Engine};
         if settings.engine == Engine::Windows {
-            return Ok(Self::Windows);
+            return Ok(Self::Windows(settings.game_language));
         }
         let dir = assets_dir()?;
         if !pokemmo_hint::engines::cached_assets_ready(&dir) {
-            return Err("请打开设置，选择 PP-OCR 并完成下载和检测。".to_owned());
+            return Err("PADDLE_NOT_READY".to_owned());
         }
         Ok(Self::Paddle(dir))
     }
@@ -133,14 +137,9 @@ impl Backend {
         cancelled: &AtomicBool,
     ) -> Result<String, String> {
         match self {
-            Self::Windows => OcrProcess::recognize_windows(image, alternate, script, cancelled)
-                .map_err(|e| {
-                    if e.contains("WINDOWS_CHINESE_OCR_UNAVAILABLE") {
-                        "系统中文 OCR 未安装。请打开设置安装，或选择 PP-OCRv6 tiny。".to_owned()
-                    } else {
-                        e
-                    }
-                }),
+            Self::Windows(language) => {
+                OcrProcess::recognize_windows(image, alternate, script, cancelled, *language)
+            }
             Self::Paddle(dir) => {
                 let mut cmd = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
                 cmd.arg("--paddle-image").arg(image).arg(dir);

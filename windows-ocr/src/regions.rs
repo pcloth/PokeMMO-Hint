@@ -1,6 +1,15 @@
-use crate::{HintCard, Roi, TYPE_NAMES};
+use crate::{type_name, HintCard, Language, Roi};
 
 pub const MAX_REGIONS: usize = 16;
+
+fn message(lang: Language, zh: &'static str, en: &'static str, ja: &'static str) -> String {
+    match lang {
+        Language::Zh => zh,
+        Language::En => en,
+        Language::Ja => ja,
+    }
+    .to_owned()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
@@ -20,20 +29,36 @@ impl Selection {
         }
     }
     pub fn screen_bounds(self, desktop: Bounds) -> Result<Bounds, String> {
-        self.roi.validate(self.width, self.height)?;
+        self.screen_bounds_for(desktop, Language::Zh)
+    }
+    pub fn screen_bounds_for(self, desktop: Bounds, lang: Language) -> Result<Bounds, String> {
+        self.roi.validate_for(self.width, self.height, lang)?;
         if self.desktop() != desktop {
-            return Err("屏幕布局或分辨率改变，请重新框选该区域。".to_owned());
+            return Err(message(
+                lang,
+                "屏幕布局或分辨率改变，请重新框选该区域。",
+                "The display layout or resolution changed. Select this region again.",
+                "画面の構成または解像度が変わりました。この範囲を選び直してください。",
+            ));
         }
+        let out_of_range = || {
+            message(
+                lang,
+                "屏幕坐标超出范围",
+                "Screen coordinates are out of range.",
+                "画面座標が範囲外です。",
+            )
+        };
         let x = self
             .origin_x
             .checked_add(self.roi.x)
-            .ok_or("屏幕坐标超出范围")?;
+            .ok_or_else(out_of_range)?;
         let y = self
             .origin_y
             .checked_add(self.roi.y)
-            .ok_or("屏幕坐标超出范围")?;
-        x.checked_add(self.roi.width).ok_or("屏幕坐标超出范围")?;
-        y.checked_add(self.roi.height).ok_or("屏幕坐标超出范围")?;
+            .ok_or_else(out_of_range)?;
+        x.checked_add(self.roi.width).ok_or_else(out_of_range)?;
+        y.checked_add(self.roi.height).ok_or_else(out_of_range)?;
         Ok(Bounds {
             x,
             y,
@@ -52,39 +77,100 @@ pub struct RegionSettings {
 }
 impl RegionSettings {
     pub fn parse(text: &str) -> Result<Self, String> {
+        Self::parse_for(text, Language::Zh)
+    }
+    pub fn parse_for(text: &str, lang: Language) -> Result<Self, String> {
         let mut result = Self::default();
         let mut lines = text.lines();
         if lines.next() != Some("pokemon-screen-regions-v1") {
-            return Err("选区不是屏幕坐标格式；旧版窗口选区需要重新框选。".to_owned());
+            return Err(message(
+                lang,
+                "选区不是屏幕坐标格式；旧版窗口选区需要重新框选。",
+                "This config is not in screen-coordinate format. Select the regions again.",
+                "この設定は画面座標形式ではありません。範囲を選び直してください。",
+            ));
         }
         for line in lines.filter(|l| !l.is_empty()) {
-            let (key, value) = line.split_once('=').ok_or("选区配置格式错误")?;
+            let (key, value) = line.split_once('=').ok_or_else(|| {
+                message(
+                    lang,
+                    "选区配置格式错误",
+                    "Invalid region config line.",
+                    "範囲設定の形式が正しくありません。",
+                )
+            })?;
             match key {
-                "region" => result.selections.push(parse_selection(value)?),
+                "region" => result.selections.push(parse_selection(value, lang)?),
                 "name" => {
-                    let (index, name) = value.split_once(',').ok_or("选区名称格式错误")?;
-                    let index: usize = index.parse().map_err(|_| "选区序号错误")?;
+                    let (index, name) = value.split_once(',').ok_or_else(|| {
+                        message(
+                            lang,
+                            "选区名称格式错误",
+                            "Invalid region name entry.",
+                            "範囲名の形式が正しくありません。",
+                        )
+                    })?;
+                    let index: usize = index.parse().map_err(|_| {
+                        message(
+                            lang,
+                            "选区序号错误",
+                            "Invalid region index.",
+                            "範囲番号が正しくありません。",
+                        )
+                    })?;
                     if index >= MAX_REGIONS {
-                        return Err("选区序号超出范围".to_owned());
+                        return Err(message(
+                            lang,
+                            "选区序号超出范围",
+                            "Region index is out of range.",
+                            "範囲番号が範囲外です。",
+                        ));
                     }
                     result
                         .names
                         .resize(result.names.len().max(index + 1), String::new());
-                    result.names[index] = validate_name(name)?;
+                    result.names[index] = validate_name(name, lang)?;
                 }
-                "selected" => result.selected = value.parse().map_err(|_| "选区序号错误")?,
+                "selected" => {
+                    result.selected = value.parse().map_err(|_| {
+                        message(
+                            lang,
+                            "选区序号错误",
+                            "Invalid region index.",
+                            "範囲番号が正しくありません。",
+                        )
+                    })?
+                }
                 "window" => {
-                    let (x, y) = value.split_once(',').ok_or("窗口位置错误")?;
+                    let invalid = || {
+                        message(
+                            lang,
+                            "窗口位置错误",
+                            "Invalid window position.",
+                            "ウィンドウ位置が正しくありません。",
+                        )
+                    };
+                    let (x, y) = value.split_once(',').ok_or_else(invalid)?;
                     result.window = Some((
-                        x.parse().map_err(|_| "窗口位置错误")?,
-                        y.parse().map_err(|_| "窗口位置错误")?,
+                        x.parse().map_err(|_| invalid())?,
+                        y.parse().map_err(|_| invalid())?,
                     ));
                 }
-                _ => return Err(format!("未知配置字段：{key}")),
+                _ => {
+                    return Err(match lang {
+                        Language::Zh => format!("未知配置字段：{key}"),
+                        Language::En => format!("Unknown config field: {key}"),
+                        Language::Ja => format!("不明な設定項目：{key}"),
+                    })
+                }
             }
         }
         if result.selections.len() > MAX_REGIONS {
-            return Err(format!("最多支持 {MAX_REGIONS} 个选区"));
+            return Err(match lang {
+                Language::Zh => format!("最多支持 {MAX_REGIONS} 个选区"),
+                Language::En => format!("At most {MAX_REGIONS} regions are supported."),
+                Language::Ja => format!("範囲は最大 {MAX_REGIONS} 個までです。"),
+            });
         }
         result.names.resize(result.selections.len(), String::new());
         result.selected = result
@@ -109,35 +195,72 @@ impl RegionSettings {
         text
     }
     pub fn name(&self, index: usize) -> String {
+        self.name_for(index, Language::Zh)
+    }
+    pub fn name_for(&self, index: usize, lang: Language) -> String {
         self.names
             .get(index)
             .filter(|s| !s.is_empty())
             .cloned()
-            .unwrap_or_else(|| format!("选区 {}", index + 1))
+            .unwrap_or_else(|| {
+                let prefix = match lang {
+                    Language::Zh => "选区",
+                    Language::En => "Region",
+                    Language::Ja => "範囲",
+                };
+                format!("{prefix} {}", index + 1)
+            })
     }
     pub fn rename(&mut self, index: usize, name: &str) -> Result<(), String> {
+        self.rename_for(index, name, Language::Zh)
+    }
+    pub fn rename_for(&mut self, index: usize, name: &str, lang: Language) -> Result<(), String> {
         if index >= self.selections.len() {
-            return Err("请先添加选区".to_owned());
+            return Err(message(
+                lang,
+                "请先添加选区",
+                "Add a region first.",
+                "先に範囲を追加してください。",
+            ));
         }
-        let name = validate_name(name)?;
+        let name = validate_name(name, lang)?;
         self.names.resize(self.selections.len(), String::new());
         self.names[index] = name;
         Ok(())
     }
 }
-fn validate_name(name: &str) -> Result<String, String> {
+fn validate_name(name: &str, lang: Language) -> Result<String, String> {
     if name.chars().any(char::is_control) || name.trim().chars().count() > 32 {
-        return Err("选区名称最多 32 个字，不能包含换行或控制字符".to_owned());
+        return Err(message(
+            lang,
+            "选区名称最多 32 个字，不能包含换行或控制字符",
+            "Region names are limited to 32 characters and cannot contain line breaks or control characters.",
+            "範囲名は 32 文字までで、改行や制御文字は使用できません。",
+        ));
     }
     Ok(name.trim().to_owned())
 }
-fn parse_selection(text: &str) -> Result<Selection, String> {
+fn parse_selection(text: &str, lang: Language) -> Result<Selection, String> {
     let values: Vec<i32> = text
         .split(',')
-        .map(|s| s.parse().map_err(|_| "选区坐标错误".to_owned()))
+        .map(|s| {
+            s.parse().map_err(|_| {
+                message(
+                    lang,
+                    "选区坐标错误",
+                    "Invalid region coordinates.",
+                    "範囲座標が正しくありません。",
+                )
+            })
+        })
         .collect::<Result<_, _>>()?;
     if values.len() != 8 {
-        return Err("选区坐标数量错误".to_owned());
+        return Err(message(
+            lang,
+            "选区坐标数量错误",
+            "Invalid number of region coordinates.",
+            "範囲座標の数が正しくありません。",
+        ));
     }
     let roi = Roi {
         x: values[0],
@@ -145,7 +268,7 @@ fn parse_selection(text: &str) -> Result<Selection, String> {
         width: values[2],
         height: values[3],
     }
-    .validate(values[4], values[5])?;
+    .validate_for(values[4], values[5], lang)?;
     let selection = Selection {
         roi,
         width: values[4],
@@ -153,7 +276,7 @@ fn parse_selection(text: &str) -> Result<Selection, String> {
         origin_x: values[6],
         origin_y: values[7],
     };
-    selection.screen_bounds(selection.desktop())?;
+    selection.screen_bounds_for(selection.desktop(), lang)?;
     Ok(selection)
 }
 
@@ -188,10 +311,15 @@ pub fn drag_roi(roi: Roi, dx: i32, dy: i32, edges: u8, width: i32, height: i32) 
     }
 }
 
-pub fn first_weakness(card: &HintCard) -> String {
+pub fn first_weakness(card: &HintCard, lang: Language) -> String {
     match card.weaknesses.first() {
-        Some(e) => format!("{}×{}", TYPE_NAMES[e.type_id], e.multiplier),
-        None => "无弱点".to_owned(),
+        Some(e) => format!("{}×{}", type_name(lang, e.type_id), e.multiplier),
+        None => match lang {
+            Language::Zh => "无弱点",
+            Language::En => "No weakness",
+            Language::Ja => "弱点なし",
+        }
+        .to_owned(),
     }
 }
 
@@ -619,12 +747,26 @@ mod tests {
     }
     #[test]
     fn compact_label_uses_only_the_first_weakness() {
+        use crate::Language;
         let species = crate::species_data();
-        let card = crate::hint_card(species.iter().find(|s| s.id == 6).unwrap());
-        assert_eq!(first_weakness(&card), "岩石×4");
+        let card = crate::hint_card(
+            species.iter().find(|s| s.id == 6).unwrap(),
+            Language::Zh,
+        );
+        assert_eq!(first_weakness(&card, Language::Zh), "岩石×4");
+        assert_eq!(first_weakness(&card, Language::En), "Rock×4");
         let mut empty = card;
         empty.weaknesses.clear();
-        assert_eq!(first_weakness(&empty), "无弱点");
+        assert_eq!(first_weakness(&empty, Language::Zh), "无弱点");
+        assert_eq!(first_weakness(&empty, Language::Ja), "弱点なし");
+    }
+    #[test]
+    fn default_region_names_follow_the_ui_language() {
+        use crate::Language;
+        let settings = RegionSettings::default();
+        assert_eq!(settings.name_for(0, Language::Zh), "选区 1");
+        assert_eq!(settings.name_for(0, Language::En), "Region 1");
+        assert_eq!(settings.name_for(2, Language::Ja), "範囲 3");
     }
     #[test]
     fn trackers_are_independent_and_continue_after_a_success() {

@@ -1,0 +1,42 @@
+{
+  "version": "1.2.0",
+  "languages": ["zh", "en", "ja"],
+  "ui_language": "independent setting; controls window text, card labels, type names and history",
+  "game_language": "independent setting; controls the Windows OCR language tag and species-name matching",
+  "first_run": "with no settings file, both languages follow the Windows UI language; existing configs keep their language",
+  "names_source": {
+    "url": "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv",
+    "retrieved": "2026-11-09",
+    "csv_bytes": 404502,
+    "csv_sha256": "820cde17074cdb1c2b0595c997fb8f998e773bd5da3bb525dec85703c86c5fd9",
+    "generated": "windows-ocr/data/species_names.tsv",
+    "generated_sha256": "4906bd82ae16105066e776e1b311c1632fba24cbd7f39de80a6fff5de6d43852",
+    "generator": "scripts/import_species_names.py",
+    "rows": 649,
+    "languages": {"en": 9, "ja": "ja-hrkt (1), fallback ja (11)"},
+    "scope": "National Nos. 1-649, factual names only"
+  },
+  "typing": {
+    "zh": "from the local B/W ROM and the same bundled type table as before",
+    "en": "built-in type-name table",
+    "ja": "built-in type-name table"
+  },
+  "ocr": {
+    "windows": "language tags zh-Hans / en-US / ja-JP passed to Windows.Media.Ocr; availability depends on installed Windows language features",
+    "ppocrv6_tiny": "dictionary contains ASCII but no kana, so Japanese names cannot be read; number recognition still works",
+    "safe_default": "Chinese game language keeps the previous behavior"
+  },
+  "matching": {
+    "english_aliases": ["Mr. Mime", "Farfetch'd / Farfetch\u2019d / Farfetchd", "Mime Jr.", "Ho-Oh / Ho Oh", "Porygon-Z / Porygon Z", "Nidoran\u2640 / Nidoran F", "Nidoran\u2642 / Nidoran M"],
+    "japanese": "kana names, including the shorter-name guard for cases such as \u30ea\u30b6\u30fc\u30c9 / \u30ea\u30b6\u30fc\u30c9\u30f3",
+    "confirmed_readings": "stored per game language"
+  },
+  "core_tests": 41,
+  "clippy": "passed",
+  "windows_build": "passed",
+  "not_verified": [
+    "visual layout in all three interface languages",
+    "live English and Japanese OCR against game screenshots",
+    "Windows Japanese OCR language-pack installation flow"
+  ]
+}

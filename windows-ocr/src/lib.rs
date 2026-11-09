@@ -6,11 +6,60 @@ pub mod history;
 pub mod model;
 pub mod regions;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Language {
+    #[default]
+    Zh,
+    En,
+    Ja,
+}
+impl Language {
+    pub const ALL: [Language; 3] = [Self::Zh, Self::En, Self::Ja];
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Zh => 0,
+            Self::En => 1,
+            Self::Ja => 2,
+        }
+    }
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Zh => "zh",
+            Self::En => "en",
+            Self::Ja => "ja",
+        }
+    }
+    /// Name written in that language, for the language selector itself.
+    pub const fn native_name(self) -> &'static str {
+        match self {
+            Self::Zh => "简体中文",
+            Self::En => "English",
+            Self::Ja => "日本語",
+        }
+    }
+    /// Language tag passed to Windows.Media.Ocr.
+    pub const fn windows_tag(self) -> &'static str {
+        match self {
+            Self::Zh => "zh-Hans",
+            Self::En => "en-US",
+            Self::Ja => "ja-JP",
+        }
+    }
+    pub fn parse(code: &str) -> Option<Self> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "zh" | "zh-cn" | "zh-hans" | "cn" => Some(Self::Zh),
+            "en" | "en-us" | "en-gb" => Some(Self::En),
+            "ja" | "ja-jp" | "jp" => Some(Self::Ja),
+            _ => None,
+        }
+    }
+}
+
 pub const TYPE_KEYS: [&str; 17] = [
     "normal", "fighting", "flying", "poison", "ground", "rock", "bug", "ghost", "steel", "fire",
     "water", "grass", "electric", "psychic", "ice", "dragon", "dark",
 ];
-pub const TYPE_NAMES: [&str; 17] = [
+pub const TYPE_NAMES_ZH: [&str; 17] = [
     "普通",
     "格斗",
     "飞行",
@@ -29,12 +78,66 @@ pub const TYPE_NAMES: [&str; 17] = [
     "龙",
     "恶",
 ];
+pub const TYPE_NAMES_EN: [&str; 17] = [
+    "Normal",
+    "Fighting",
+    "Flying",
+    "Poison",
+    "Ground",
+    "Rock",
+    "Bug",
+    "Ghost",
+    "Steel",
+    "Fire",
+    "Water",
+    "Grass",
+    "Electric",
+    "Psychic",
+    "Ice",
+    "Dragon",
+    "Dark",
+];
+pub const TYPE_NAMES_JA: [&str; 17] = [
+    "ノーマル",
+    "かくとう",
+    "ひこう",
+    "どく",
+    "じめん",
+    "いわ",
+    "むし",
+    "ゴースト",
+    "はがね",
+    "ほのお",
+    "みず",
+    "くさ",
+    "でんき",
+    "エスパー",
+    "こおり",
+    "ドラゴン",
+    "あく",
+];
+pub fn type_names(lang: Language) -> &'static [&'static str; 17] {
+    match lang {
+        Language::Zh => &TYPE_NAMES_ZH,
+        Language::En => &TYPE_NAMES_EN,
+        Language::Ja => &TYPE_NAMES_JA,
+    }
+}
+pub fn type_name(lang: Language, type_id: usize) -> &'static str {
+    type_names(lang)[type_id]
+}
 
 #[derive(Debug, Clone)]
 pub struct Species {
     pub id: u16,
-    pub name: String,
+    /// Invariant: Chinese, English and Japanese names are always present.
+    pub names: [String; 3],
     pub types: Vec<usize>,
+}
+impl Species {
+    pub fn name(&self, lang: Language) -> &str {
+        &self.names[lang.index()]
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,10 +157,10 @@ pub struct HintCard {
     pub immunities: Vec<TypeEffect>,
 }
 
-pub fn hint_card(species: &Species) -> HintCard {
+pub fn hint_card(species: &Species, lang: Language) -> HintCard {
     let mut card = HintCard {
         id: species.id,
-        name: species.name.clone(),
+        name: species.name(lang).to_owned(),
         types: species.types.clone(),
         weaknesses: vec![],
         neutral: vec![],
@@ -88,15 +191,22 @@ pub fn hint_card(species: &Species) -> HintCard {
 }
 
 pub fn species_data() -> Vec<Species> {
+    let names = species_names();
     include_str!("../data/species.tsv")
         .lines()
         .filter(|line| !line.starts_with('#') && !line.is_empty())
         .map(|line| {
             let fields: Vec<_> = line.split('\t').collect();
             assert_eq!(fields.len(), 4, "invalid bundled species row");
+            let id: u16 = fields[0].parse().expect("species id");
+            let chinese = fields[1].to_owned();
+            let (english, japanese) = names
+                .get(usize::from(id))
+                .and_then(|names| names.clone())
+                .unwrap_or_else(|| (chinese.clone(), chinese.clone()));
             Species {
-                id: fields[0].parse().expect("species id"),
-                name: fields[1].to_owned(),
+                id,
+                names: [chinese, english, japanese],
                 types: fields[2..]
                     .iter()
                     .filter(|key| !key.is_empty())
@@ -105,6 +215,21 @@ pub fn species_data() -> Vec<Species> {
             }
         })
         .collect()
+}
+fn species_names() -> Vec<Option<(String, String)>> {
+    let mut names = vec![None; 650];
+    for line in include_str!("../data/species_names.tsv").lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let fields: Vec<_> = line.split('\t').collect();
+        assert_eq!(fields.len(), 3, "invalid bundled species name row");
+        let id: usize = fields[0].parse().expect("species name id");
+        assert!(id < names.len(), "species name id out of range");
+        assert!(names[id].is_none(), "duplicate species name row");
+        names[id] = Some((fields[1].to_owned(), fields[2].to_owned()));
+    }
+    names
 }
 
 // Generation 2-5, attacker rows. Steel still resists Ghost and Dark; no Fairy.
@@ -186,9 +311,10 @@ pub fn incoming_multiplier(attack: usize, species: &Species) -> f64 {
         .product()
 }
 
-pub fn hint(species: &Species) -> String {
+pub fn hint(species: &Species, lang: Language) -> String {
+    let names = type_names(lang);
     let mut groups: Vec<Vec<&str>> = vec![vec![]; 6];
-    for (attack, name) in TYPE_NAMES.iter().enumerate() {
+    for (attack, name) in names.iter().enumerate() {
         let value = incoming_multiplier(attack, species);
         let group = if value == 4.0 {
             Some(0)
@@ -207,59 +333,76 @@ pub fn hint(species: &Species) -> String {
             groups[i].push(name);
         }
     }
+    let (weak_label, neutral_label, resist_label, immune_label, none) = match lang {
+        Language::Zh => ("弱点", "普通伤害（1倍）", "抗性", "免疫", "无"),
+        Language::En => ("Weaknesses", "Neutral (1x)", "Resists", "Immunities", "none"),
+        Language::Ja => ("弱点", "等倍", "耐性", "無効", "なし"),
+    };
+    let (strong4, strong2, resist2, resist4) = match lang {
+        Language::En => ("4x: ", "2x: ", "1/2x: ", "1/4x: "),
+        Language::Zh | Language::Ja => ("4倍：", "2倍：", "1/2：", "1/4："),
+    };
+    let (and_sep, group_sep) = match lang {
+        Language::En => (", ", "; "),
+        Language::Zh | Language::Ja => ("、", "；"),
+    };
     let mut lines = vec![format!(
         "#{:03} {} · {}",
         species.id,
-        species.name,
+        species.name(lang),
         species
             .types
             .iter()
-            .map(|&t| TYPE_NAMES[t])
+            .map(|&t| names[t])
             .collect::<Vec<_>>()
             .join(" / ")
     )];
     let mut weak = Vec::new();
-    for (i, prefix) in [(0, "4倍："), (1, "2倍：")] {
+    for (i, prefix) in [(0, strong4), (1, strong2)] {
         if !groups[i].is_empty() {
-            weak.push(format!("{}{}", prefix, groups[i].join("、")));
+            weak.push(format!("{}{}", prefix, groups[i].join(and_sep)));
         }
     }
     lines.push(format!(
-        "弱点  {}",
+        "{}  {}",
+        weak_label,
         if weak.is_empty() {
-            "无".to_owned()
+            none.to_owned()
         } else {
-            weak.join("；")
+            weak.join(group_sep)
         }
     ));
     lines.push(format!(
-        "普通伤害（1倍）  {}",
+        "{}  {}",
+        neutral_label,
         if groups[5].is_empty() {
-            "无".to_owned()
+            none.to_owned()
         } else {
-            groups[5].join("、")
+            groups[5].join(and_sep)
         }
     ));
     let mut resist = Vec::new();
-    for (i, prefix) in [(2, "1/2："), (3, "1/4：")] {
+    for (i, prefix) in [(2, resist2), (3, resist4)] {
         if !groups[i].is_empty() {
-            resist.push(format!("{}{}", prefix, groups[i].join("、")));
+            resist.push(format!("{}{}", prefix, groups[i].join(and_sep)));
         }
     }
     lines.push(format!(
-        "抗性  {}",
+        "{}  {}",
+        resist_label,
         if resist.is_empty() {
-            "无".to_owned()
+            none.to_owned()
         } else {
-            resist.join("；")
+            resist.join(group_sep)
         }
     ));
     lines.push(format!(
-        "免疫  {}",
+        "{}  {}",
+        immune_label,
         if groups[4].is_empty() {
-            "无".to_owned()
+            none.to_owned()
         } else {
-            groups[4].join("、")
+            groups[4].join(and_sep)
         }
     ));
     lines.join("\r\n")
@@ -271,30 +414,44 @@ pub struct NameSuggestion {
     pub observed: String,
 }
 
-pub fn correction_key(text: &str) -> Option<String> {
+pub fn correction_key(text: &str, lang: Language) -> Option<String> {
     let text = normalized(text);
     if text.contains("no") || text.contains('#') {
         return None;
     }
-    let name: String = text
-        .split("lv")
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
-        .collect();
-    (3..=6).contains(&name.chars().count()).then_some(name)
+    let before_level = text.split("lv").next().unwrap_or("");
+    let name: String = match lang {
+        Language::Zh => before_level
+            .chars()
+            .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+            .collect(),
+        Language::En => before_level
+            .chars()
+            .filter(|c| c.is_ascii_alphabetic())
+            .collect(),
+        Language::Ja => before_level.chars().filter(|c| is_kana(*c)).collect(),
+    };
+    let length = name.chars().count();
+    let range = match lang {
+        Language::Zh => 3..=6,
+        Language::En => 4..=20,
+        Language::Ja => 3..=12,
+    };
+    range.contains(&length).then_some(name)
+}
+fn is_kana(c: char) -> bool {
+    ('\u{3040}'..='\u{30ff}').contains(&c)
 }
 
 // A single unique substitution is a suggestion, never an automatic match.
-pub fn suggest_ocr(text: &str, data: &[Species]) -> Option<NameSuggestion> {
-    if match_ocr(text, data) != MatchResult::Unknown {
+pub fn suggest_ocr(text: &str, lang: Language, data: &[Species]) -> Option<NameSuggestion> {
+    if match_ocr(text, lang, data) != MatchResult::Unknown {
         return None;
     }
-    let key = correction_key(text)?;
+    let key = correction_key(text, lang)?;
     let chars: Vec<_> = key.chars().collect();
     let mut candidates = data.iter().filter(|s| {
-        let name: Vec<_> = s.name.chars().collect();
+        let name: Vec<_> = normalized(s.name(lang)).chars().collect();
         name.len() == chars.len() && name.iter().zip(&chars).filter(|(a, b)| a != b).count() == 1
     });
     let first = candidates.next()?;
@@ -314,18 +471,26 @@ pub struct ReadDecision {
     pub suggestion: Option<NameSuggestion>,
 }
 
+/// Confirmed misreadings are scoped to one game language, so a key remembered
+/// for a Chinese read never resolves an English or Japanese read.
+pub fn confirmed_key(lang: Language, text: &str) -> String {
+    format!("{}:{text}", lang.code())
+}
+
 pub fn resolve_reads(
     reads: &[String],
+    lang: Language,
     data: &[Species],
     confirmed: &std::collections::HashMap<String, u16>,
 ) -> ReadDecision {
     let mut found = Vec::new();
     let mut suggestions = Vec::new();
     for raw in reads {
-        let mut result = match_ocr(raw, data);
+        let mut result = match_ocr(raw, lang, data);
         let mut corrected = false;
         if result == MatchResult::Unknown {
-            if let Some(id) = correction_key(raw)
+            if let Some(id) = correction_key(raw, lang)
+                .map(|key| confirmed_key(lang, &key))
                 .and_then(|key| confirmed.get(&key))
                 .copied()
             {
@@ -346,7 +511,7 @@ pub fn resolve_reads(
             }
             MatchResult::Found(id) => found.push((id, raw, corrected)),
             MatchResult::Unknown => {
-                if let Some(s) = suggest_ocr(raw, data) {
+                if let Some(s) = suggest_ocr(raw, lang, data) {
                     suggestions.push((raw, s));
                 }
             }
@@ -409,7 +574,9 @@ fn normalized(text: &str) -> String {
     text.chars()
         .map(|c| {
             if ('\u{ff01}'..='\u{ff5e}').contains(&c) {
-                char::from_u32(c as u32 - 0xfee0).unwrap()
+                char::from_u32(c as u32 - 0xfee0).unwrap_or(c)
+            } else if matches!(c, '\u{2018}' | '\u{2019}' | '\u{2032}') {
+                '\''
             } else {
                 c
             }
@@ -419,25 +586,25 @@ fn normalized(text: &str) -> String {
 }
 
 // Deliberately require an exact name. Guessing a similar name can give wrong immunities.
-pub fn match_ocr(text: &str, data: &[Species]) -> MatchResult {
+pub fn match_ocr(text: &str, lang: Language, data: &[Species]) -> MatchResult {
     let compact = compact(text);
     let ids = match explicit_numbers(&normalized(text)) {
         Ok(ids) => ids,
         Err(()) => return MatchResult::Unknown,
     };
-    let aliases: Vec<_> = data.iter().map(|s| (s, name_aliases(s))).collect();
+    let aliases: Vec<_> = data.iter().map(|s| (s, name_aliases(s, lang))).collect();
     let mut found: Vec<_> = aliases
         .iter()
         .filter(|(_, names)| names.iter().any(|n| contains_name(&compact, n)))
         .map(|(s, _)| *s)
         .collect();
-    // Prefer full species names over contained shorter names (e.g. 多边兽2 / 多边兽).
+    // Prefer full species names over contained shorter names (e.g. リザード / リザードン).
     found.retain(|s| {
         !aliases.iter().any(|(other, names)| {
             other.id != s.id
                 && names
                     .iter()
-                    .any(|name| name.contains(&compact_name(s)) && contains_name(&compact, name))
+                    .any(|name| name.contains(&compact_name(s, lang)) && contains_name(&compact, name))
         })
     });
     if ids.len() > 1 {
@@ -525,7 +692,7 @@ fn explicit_numbers(text: &str) -> Result<Vec<u16>, ()> {
 fn contains_name(text: &str, name: &str) -> bool {
     text.match_indices(name).any(|(offset, _)| {
         let tail = &text[offset + name.len()..];
-        // A misread suffix must not turn 多边兽3 into the shorter 多边兽.
+        // A misread suffix must not turn a shorter name into a longer species.
         !tail
             .chars()
             .next()
@@ -534,27 +701,41 @@ fn contains_name(text: &str, name: &str) -> bool {
     })
 }
 
-fn compact_name(species: &Species) -> String {
-    compact(&species.name)
+fn compact_name(species: &Species, lang: Language) -> String {
+    compact(species.name(lang))
 }
-fn name_aliases(species: &Species) -> Vec<String> {
-    let mut names = vec![compact_name(species)];
-    match species.id {
-        233 => names.extend(["多边兽2", "多边兽ii", "多边兽Ⅱ"].map(compact)),
-        474 => names.extend(["多边兽z", "多边兽Ｚ"].map(compact)),
-        _ => {}
+fn name_aliases(species: &Species, lang: Language) -> Vec<String> {
+    let mut names = vec![compact_name(species, lang)];
+    let extra: &[&str] = match (lang, species.id) {
+        (Language::Zh, 233) => &["多边兽2", "多边兽ii", "多边兽Ⅱ"],
+        (Language::Zh, 474) => &["多边兽z", "多边兽Ｚ"],
+        // OCR often drops a gender sign or renders it as F/M.
+        (Language::En, 29) => &["Nidoran♀", "NidoranF", "Nidoran female"],
+        (Language::En, 32) => &["Nidoran♂", "NidoranM", "Nidoran male"],
+        (Language::En, 83) => &["Farfetchd", "Farfetch'd"],
+        (Language::En, 122) => &["Mr Mime"],
+        (Language::En, 439) => &["Mime Jr", "MimeJr"],
+        (Language::En, 250) => &["Ho Oh"],
+        (Language::En, 474) => &["Porygon Z"],
+        _ => &[],
+    };
+    for alias in extra {
+        let alias = compact(alias);
+        if !names.contains(&alias) {
+            names.push(alias);
+        }
     }
     names
 }
 
-pub fn lookup_query(text: &str, data: &[Species]) -> MatchResult {
+pub fn lookup_query(text: &str, lang: Language, data: &[Species]) -> MatchResult {
     if let Ok(id) = text.trim().trim_start_matches('#').parse::<u16>() {
         if data.iter().any(|s| s.id == id) {
             return MatchResult::Found(id);
         }
         return MatchResult::Unknown;
     }
-    match_ocr(text, data)
+    match_ocr(text, lang, data)
 }
 
 #[derive(Default)]
@@ -591,6 +772,9 @@ pub struct Roi {
 }
 impl Roi {
     pub fn validate(self, width: i32, height: i32) -> Result<Self, String> {
+        self.validate_for(width, height, Language::Zh)
+    }
+    pub fn validate_for(self, width: i32, height: i32, lang: Language) -> Result<Self, String> {
         if self.x < 0
             || self.y < 0
             || self.width < 8
@@ -600,7 +784,12 @@ impl Roi {
             || self.x as i64 + self.width as i64 > width as i64
             || self.y as i64 + self.height as i64 > height as i64
         {
-            return Err("选择区域必须在屏幕范围内，且至少 8×8 像素".to_owned());
+            let message = match lang {
+                Language::Zh => "选择区域必须在屏幕范围内，且至少 8×8 像素",
+                Language::En => "Select an area inside the screen that is at least 8×8 pixels.",
+                Language::Ja => "画面内で 8×8 ピクセル以上の範囲を選んでください。",
+            };
+            return Err(message.to_owned());
         }
         Ok(self)
     }
@@ -617,8 +806,15 @@ mod tests {
     fn species(id: u16) -> Species {
         species_data().into_iter().find(|s| s.id == id).unwrap()
     }
+    fn manual_species(id: u16, zh: &str, en: &str, ja: &str) -> Species {
+        Species {
+            id,
+            names: [zh.to_owned(), en.to_owned(), ja.to_owned()],
+            types: vec![11],
+        }
+    }
     #[test]
-    fn all_species_are_valid_and_unique() {
+    fn all_species_have_three_names_and_valid_types() {
         let data = species_data();
         assert_eq!(data.len(), 649);
         for id in 1..=649 {
@@ -627,17 +823,51 @@ mod tests {
         assert!(data
             .iter()
             .all(|s| (1..=2).contains(&s.types.len()) && s.types.iter().all(|&t| t < 17)));
+        for lang in Language::ALL {
+            let mut names: Vec<_> = data.iter().map(|s| s.name(lang)).collect();
+            assert!(
+                names
+                    .iter()
+                    .all(|name| !name.is_empty() && !name.chars().any(char::is_control)),
+                "{lang:?}"
+            );
+            names.sort_unstable();
+            names.dedup();
+            assert_eq!(names.len(), 649, "{lang:?} names must be unique");
+        }
+        assert_eq!(species(25).name(Language::Zh), "皮卡丘");
+        assert_eq!(species(25).name(Language::En), "Pikachu");
+        assert_eq!(species(25).name(Language::Ja), "ピカチュウ");
+    }
+    #[test]
+    fn language_codes_round_trip() {
+        for lang in Language::ALL {
+            assert_eq!(Language::parse(lang.code()), Some(lang));
+            assert!(Language::parse("xx").is_none());
+        }
+        assert_eq!(Language::parse("ja-JP"), Some(Language::Ja));
+        assert_eq!(Language::parse("zh-Hans"), Some(Language::Zh));
+        assert_eq!(Language::parse("en-US"), Some(Language::En));
     }
     #[test]
     fn known_screenshot_enemies() {
         let data = species_data();
         assert_eq!(
-            match_ocr("雷 电 斑 马 Lv. 29 ♀", &data),
+            match_ocr("雷 电 斑 马 Lv. 29 ♀", Language::Zh, &data),
             MatchResult::Found(523)
         );
-        assert_eq!(match_ocr("奇诺栗鼠Lv.43", &data), MatchResult::Found(573));
-        assert_eq!(match_ocr("Minipete Lv.30", &data), MatchResult::Unknown);
-        assert_eq!(match_ocr("Lv.29", &data), MatchResult::Unknown);
+        assert_eq!(
+            match_ocr("奇诺栗鼠Lv.43", Language::Zh, &data),
+            MatchResult::Found(573)
+        );
+        assert_eq!(
+            match_ocr("Minipete Lv.30", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("Lv.29", Language::Zh, &data),
+            MatchResult::Unknown
+        );
     }
     #[test]
     fn explicit_dex_numbers_and_name_cross_checks() {
@@ -651,24 +881,138 @@ mod tests {
             "No.573 Lv.29",
             "No. 5 73",
         ] {
-            assert_eq!(match_ocr(text, &data), MatchResult::Found(573), "{text}");
+            assert_eq!(
+                match_ocr(text, Language::Zh, &data),
+                MatchResult::Found(573),
+                "{text}"
+            );
         }
-        assert_eq!(match_ocr("No.573 雷电斑马", &data), MatchResult::Conflict);
-        assert_eq!(match_ocr("No.573 No.523", &data), MatchResult::Ambiguous);
-        assert_eq!(match_ocr("Lv.573", &data), MatchResult::Unknown);
-        assert_eq!(match_ocr("573", &data), MatchResult::Unknown);
-        assert_eq!(match_ocr("No.999 奇诺栗鼠", &data), MatchResult::Unknown);
-        assert_eq!(match_ocr("No.0", &data), MatchResult::Unknown);
-        assert_eq!(match_ocr("No.57B", &data), MatchResult::Unknown);
+        assert_eq!(
+            match_ocr("No.573 雷电斑马", Language::Zh, &data),
+            MatchResult::Conflict
+        );
+        assert_eq!(
+            match_ocr("No.573 No.523", Language::Zh, &data),
+            MatchResult::Ambiguous
+        );
+        assert_eq!(
+            match_ocr("Lv.573", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("573", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("No.999 奇诺栗鼠", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(match_ocr("No.0", Language::Zh, &data), MatchResult::Unknown);
+        assert_eq!(
+            match_ocr("No.57B", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+    }
+    #[test]
+    fn english_names_match_common_ocr_text() {
+        let data = species_data();
+        for (text, id) in [
+            ("Pikachu Lv.29", 25),
+            ("Charizard", 6),
+            ("Mr. Mime Lv.20", 122),
+            ("Mime Jr. Lv.15", 439),
+            ("Farfetch'd", 83),
+            ("Farfetchd", 83),
+            ("Farfetch’d", 83),
+            ("Ho-Oh", 250),
+            ("Ho Oh", 250),
+            ("Porygon-Z", 474),
+            ("Porygon Z", 474),
+            ("Nidoran♀", 29),
+            ("Nidoran F", 29),
+            ("Nidoran♂", 32),
+            ("Nidoran M", 32),
+            ("Mewtwo Lv.70", 150),
+            ("Mew Lv.70", 151),
+        ] {
+            assert_eq!(
+                match_ocr(text, Language::En, &data),
+                MatchResult::Found(id),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            match_ocr("No.573", Language::En, &data),
+            MatchResult::Found(573)
+        );
+        assert_eq!(
+            match_ocr("Lv.29", Language::En, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("573", Language::En, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("Pikachu 小火龙", Language::En, &data),
+            MatchResult::Found(25)
+        );
+    }
+    #[test]
+    fn japanese_names_match_common_ocr_text() {
+        let data = species_data();
+        for (text, id) in [
+            ("ピカチュウ Lv.29", 25),
+            ("リザードン", 6),
+            ("リザード", 5),
+            ("ミュウツー Lv.70", 150),
+            ("ミュウ Lv.70", 151),
+            ("ニドラン♀", 29),
+            ("ニドラン♂", 32),
+            ("フシギダネ", 1),
+        ] {
+            assert_eq!(
+                match_ocr(text, Language::Ja, &data),
+                MatchResult::Found(id),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            match_ocr("No.573", Language::Ja, &data),
+            MatchResult::Found(573)
+        );
+        assert_eq!(
+            match_ocr("Lv.29", Language::Ja, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            match_ocr("573", Language::Ja, &data),
+            MatchResult::Unknown
+        );
     }
     #[test]
     fn matching_rejects_multiple_and_misread_names() {
         let data = species_data();
-        assert_eq!(match_ocr("皮卡丘 小火龙", &data), MatchResult::Ambiguous);
-        assert_eq!(match_ocr("雷电班马", &data), MatchResult::Unknown);
-        assert_eq!(lookup_query("573", &data), MatchResult::Found(573));
-        assert_eq!(match_ocr("多边兽2 Lv.20", &data), MatchResult::Found(233));
-        assert_eq!(match_ocr("多边兽3 Lv.20", &data), MatchResult::Unknown);
+        assert_eq!(
+            match_ocr("皮卡丘 小火龙", Language::Zh, &data),
+            MatchResult::Ambiguous
+        );
+        assert_eq!(
+            match_ocr("雷电班马", Language::Zh, &data),
+            MatchResult::Unknown
+        );
+        assert_eq!(
+            lookup_query("573", Language::Zh, &data),
+            MatchResult::Found(573)
+        );
+        assert_eq!(
+            match_ocr("多边兽2 Lv.20", Language::Zh, &data),
+            MatchResult::Found(233)
+        );
+        assert_eq!(
+            match_ocr("多边兽3 Lv.20", Language::Zh, &data),
+            MatchResult::Unknown
+        );
     }
     #[test]
     fn dual_types_and_immunities() {
@@ -678,7 +1022,7 @@ mod tests {
         assert_eq!(incoming_multiplier(1, &species(573)), 2.0);
         assert_eq!(incoming_multiplier(7, &species(573)), 0.0);
         assert_eq!(incoming_multiplier(4, &species(523)), 2.0);
-        assert!(hint(&species(523)).contains("2倍：地面"));
+        assert!(hint(&species(523), Language::Zh).contains("2倍：地面"));
     }
     #[test]
     fn generation_five_steel_resists_ghost_and_dark() {
@@ -722,13 +1066,22 @@ mod tests {
         }
         .validate(1920, 1080)
         .is_ok());
+        let error = Roi {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        }
+        .validate_for(1920, 1080, Language::En)
+        .unwrap_err();
+        assert!(error.contains("8×8"));
     }
     #[test]
     fn near_name_is_only_a_candidate_until_confirmed() {
         let data = species_data();
         let mut aliases = std::collections::HashMap::new();
         let reads = vec!["君主尼".to_owned()];
-        let decision = resolve_reads(&reads, &data, &aliases);
+        let decision = resolve_reads(&reads, Language::Zh, &data, &aliases);
         assert_eq!(decision.result, MatchResult::Unknown);
         assert_eq!(
             decision.suggestion.unwrap(),
@@ -737,41 +1090,62 @@ mod tests {
                 observed: "君主尼".to_owned()
             }
         );
-        aliases.insert("君主尼".to_owned(), 497);
-        let decision = resolve_reads(&reads, &data, &aliases);
+        aliases.insert(confirmed_key(Language::Zh, "君主尼"), 497);
+        let decision = resolve_reads(&reads, Language::Zh, &data, &aliases);
         assert_eq!(decision.result, MatchResult::Found(497));
         assert!(decision.corrected);
-        assert!(suggest_ocr("No.49B", &data).is_none());
-        assert!(suggest_ocr("蛇", &data).is_none());
+        assert!(suggest_ocr("No.49B", Language::Zh, &data).is_none());
+        assert!(suggest_ocr("蛇", Language::Zh, &data).is_none());
         let ambiguous = vec![
-            Species {
-                id: 1,
-                name: "君主蛇".to_owned(),
-                types: vec![11],
-            },
-            Species {
-                id: 2,
-                name: "君主猴".to_owned(),
-                types: vec![11],
-            },
+            manual_species(1, "君主蛇", "Serperior", "ジャローダ"),
+            manual_species(2, "君主猴", "Serperiorm", "ジャローダー"),
         ];
-        assert!(suggest_ocr("君主尼", &ambiguous).is_none());
+        assert!(suggest_ocr("君主尼", Language::Zh, &ambiguous).is_none());
+    }
+    #[test]
+    fn suggestions_and_confirmations_are_scoped_to_the_game_language() {
+        let data = species_data();
+        let suggestion = suggest_ocr("Pikachi", Language::En, &data).unwrap();
+        assert_eq!(suggestion.id, 25);
+        assert_eq!(suggestion.observed, "pikachi");
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert(confirmed_key(Language::En, "pikachi"), 25);
+        let decision = resolve_reads(&["Pikachi".to_owned()], Language::En, &data, &aliases);
+        assert_eq!(decision.result, MatchResult::Found(25));
+        assert!(decision.corrected);
+        let other = resolve_reads(&["Pikachi".to_owned()], Language::Ja, &data, &aliases);
+        assert_eq!(other.result, MatchResult::Unknown);
+        let japanese = suggest_ocr("ピカチュゥ", Language::Ja, &data).unwrap();
+        assert_eq!(japanese.id, 25);
     }
     #[test]
     fn alternative_read_can_rescue_but_cannot_override_conflicts() {
         let data = species_data();
         let aliases = std::collections::HashMap::new();
         assert_eq!(
-            resolve_reads(&["君主尼".to_owned(), "君主蛇".to_owned()], &data, &aliases).result,
+            resolve_reads(
+                &["君主尼".to_owned(), "君主蛇".to_owned()],
+                Language::Zh,
+                &data,
+                &aliases
+            )
+            .result,
             MatchResult::Found(497)
         );
         assert_eq!(
-            resolve_reads(&["君主蛇".to_owned(), "皮卡丘".to_owned()], &data, &aliases).result,
+            resolve_reads(
+                &["君主蛇".to_owned(), "皮卡丘".to_owned()],
+                Language::Zh,
+                &data,
+                &aliases
+            )
+            .result,
             MatchResult::Conflict
         );
         assert_eq!(
             resolve_reads(
                 &["No.573 雷电斑马".to_owned(), "奇诺栗鼠".to_owned()],
+                Language::Zh,
                 &data,
                 &aliases
             )
@@ -781,18 +1155,18 @@ mod tests {
     }
     #[test]
     fn neutral_damage_matches_serperior_and_all_types_are_present_once() {
-        let card = hint_card(&species(497));
+        let card = hint_card(&species(497), Language::Zh);
         assert_eq!(
             card.neutral
                 .iter()
-                .map(|effect| TYPE_NAMES[effect.type_id])
+                .map(|effect| TYPE_NAMES_ZH[effect.type_id])
                 .collect::<Vec<_>>(),
             vec!["普通", "格斗", "岩石", "幽灵", "钢", "超能力", "龙", "恶"]
         );
-        assert!(hint(&species(497))
+        assert!(hint(&species(497), Language::Zh)
             .contains("普通伤害（1倍）  普通、格斗、岩石、幽灵、钢、超能力、龙、恶"));
         for pokemon in species_data() {
-            let card = hint_card(&pokemon);
+            let card = hint_card(&pokemon, Language::Zh);
             let mut seen = [false; 17];
             for group in [
                 &card.weaknesses,
@@ -801,17 +1175,21 @@ mod tests {
                 &card.immunities,
             ] {
                 for effect in group {
-                    assert!(!seen[effect.type_id], "{}", pokemon.name);
+                    assert!(!seen[effect.type_id], "{}", pokemon.name(Language::Zh));
                     seen[effect.type_id] = true;
                 }
             }
-            assert!(seen.into_iter().all(|seen| seen), "{}", pokemon.name);
+            assert!(
+                seen.into_iter().all(|seen| seen),
+                "{}",
+                pokemon.name(Language::Zh)
+            );
             assert!(card.neutral.iter().all(|effect| effect.multiplier == 1.0));
         }
     }
     #[test]
     fn card_separates_type_effects_and_omits_old_caption() {
-        let card = hint_card(&species(6));
+        let card = hint_card(&species(6), Language::Zh);
         assert_eq!(card.id, 6);
         assert!(card
             .weaknesses
@@ -825,6 +1203,27 @@ mod tests {
             .immunities
             .iter()
             .any(|e| e.type_id == 4 && e.multiplier == 0.0));
-        assert!(!hint(&species(6)).contains("基础形态属性"));
+        assert!(!hint(&species(6), Language::Zh).contains("基础形态属性"));
+    }
+    #[test]
+    fn type_names_and_hints_are_localized() {
+        for lang in Language::ALL {
+            let names = type_names(lang);
+            let mut unique = names.to_vec();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(unique.len(), 17, "{lang:?}");
+            assert!(names.iter().all(|name| !name.is_empty()));
+        }
+        let english = hint(&species(6), Language::En);
+        assert!(english.contains("#006 Charizard · Fire / Flying"));
+        assert!(english.contains("Weaknesses  4x: Rock"));
+        assert!(english.contains("Immunities  Ground"));
+        let japanese = hint(&species(1), Language::Ja);
+        assert!(japanese.contains("#001 フシギダネ · くさ / どく"));
+        assert!(japanese.contains("弱点"));
+        assert!(japanese.contains("耐性"));
+        assert_eq!(type_name(Language::En, 9), "Fire");
+        assert_eq!(type_name(Language::Ja, 9), "ほのお");
     }
 }

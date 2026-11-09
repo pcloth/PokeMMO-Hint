@@ -1,4 +1,4 @@
-//! Modal engine selection; preparation runs off the UI thread and is cancellable.
+//! Modal engine and language selection; preparation runs off the UI thread.
 use super::*;
 use crate::ocr::{powershell, OcrProcess};
 use pokemmo_hint::engines::{self, DownloadSource, Engine, EngineSettings};
@@ -28,6 +28,7 @@ struct Context {
     tips: RefCell<tooltips::Tooltips>,
     theme: Rc<paint::Theme>,
     dpi: u32,
+    text: &'static Strings,
 }
 impl State {
     fn stop(&mut self) {
@@ -37,17 +38,17 @@ impl State {
         }
         self.rx = None;
     }
-    unsafe fn prepare(&mut self, hwnd: Handle) {
+    unsafe fn prepare(&mut self, hwnd: Handle, text: &'static Strings) {
         self.stop();
         self.stop = Arc::new(AtomicBool::new(false));
         self.ready = false;
-        self.status = "正在准备识别引擎…".to_owned();
+        self.status = text.settings_preparing.to_owned();
         EnableWindow(GetDlgItem(hwnd, 201), 0);
         let (value, stop) = (self.value, self.stop.clone());
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         self.worker = Some(thread::spawn(move || {
-            let result = prepare(value, &stop, &tx);
+            let result = prepare(value, text, &stop, &tx);
             let _ = tx.send(result);
         }));
         InvalidateRect(hwnd, null(), 0);
@@ -55,18 +56,31 @@ impl State {
 }
 fn prepare(
     value: EngineSettings,
+    text: &'static Strings,
     stop: &AtomicBool,
     tx: &mpsc::Sender<Result<String, String>>,
 ) -> Result<String, String> {
     let scratch = Scratch::create()?;
+    let language = value.game_language.native_name();
     if value.engine == Engine::Windows {
         let mut cmd = powershell(&scratch.windows_script)?;
-        cmd.arg("-CheckOnly");
-        let output=OcrProcess::capture_command(cmd,stop).map_err(|_|"系统中文 OCR 不可用。点击语言设置，为简体中文安装‘光学字符识别’，再点击重试；也可以选择 PP-OCR。".to_owned())?;
+        cmd.arg("-CheckOnly")
+            .arg("-Language")
+            .arg(value.game_language.windows_tag());
+        let output = OcrProcess::capture_command(cmd, stop).map_err(|error| {
+            if error.contains("WINDOWS_OCR_UNAVAILABLE") {
+                i18n::fill(text.settings_windows_missing, &[("lang", language)])
+            } else {
+                i18n::fill(text.settings_failed, &[("error", &error)])
+            }
+        })?;
         if !output.contains("WINDOWS_OCR_READY") {
-            return Err("系统 OCR 检测失败".to_owned());
+            return Err(text.settings_windows_check_failed.to_owned());
         }
-        return Ok("Windows 中文 OCR 已就绪，无需下载模型。".to_owned());
+        return Ok(i18n::fill(
+            text.settings_windows_ready,
+            &[("lang", language)],
+        ));
     }
     let cache = engines::assets_dir()?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
@@ -107,7 +121,7 @@ fn prepare(
         })?;
     }
     if stop.load(Ordering::Relaxed) {
-        return Err("已取消".to_owned());
+        return Err(text.settings_cancelled.to_owned());
     }
     let _ = tx.send(Ok("PROGRESS:CHECK loading model".to_owned()));
     let mut cmd = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
@@ -118,35 +132,45 @@ fn prepare(
                 // A broken cached runtime must not cause a silent download on opening
                 // settings. A deliberate retry will check hashes and repair bad files.
                 let _ = std::fs::remove_file(cache.join("ready.txt"));
-                format!("缓存加载失败：{error}。点击重试可检查并修复缓存。")
+                i18n::fill(text.settings_cache_failed, &[("error", &error)])
             } else {
                 error
             }
         })?;
     if !output.contains("PADDLE_READY") {
-        return Err("模型加载检测未通过".to_owned());
+        return Err(text.settings_check_failed.to_owned());
     }
     std::fs::write(cache.join("ready.txt"), engines::MODEL_SHA256).map_err(|e| e.to_string())?;
-    Ok(if using_cache {
-        "PP-OCRv6 tiny 已就绪，已复用本地缓存，未下载文件。"
+    let mut ready = if using_cache {
+        text.settings_paddle_ready_cache.to_owned()
     } else {
-        "PP-OCRv6 tiny 已就绪，模型与推理组件已缓存，可离线使用。"
+        text.settings_paddle_ready_new.to_owned()
+    };
+    if !value.supports_game_language(value.game_language) {
+        ready.push_str("\r\n");
+        ready.push_str(text.settings_ppocr_ja_warning);
     }
-    .to_owned())
+    Ok(ready)
 }
-fn progress_text(s: &str) -> String {
+fn progress_text(s: &str, text: &'static Strings) -> String {
     s.replace("PROGRESS:", "")
-        .replace("MODEL", "下载模型（约 4.46 MB）：")
-        .replace("RUNTIME", "下载推理组件（约 17 MB）：")
-        .replace("connecting", "正在连接…")
-        .replace("extracting", "正在解压…")
+        .replace("MODEL", text.settings_progress_model)
+        .replace("RUNTIME", text.settings_progress_runtime)
+        .replace("connecting", text.settings_progress_connecting)
+        .replace("extracting", text.settings_progress_extracting)
         .replace(
             "CACHE loading saved files",
-            "已找到本地缓存，正在本地加载，无需下载…",
+            text.settings_progress_cache_loading,
         )
-        .replace("CACHE model verified", "模型缓存校验通过，无需下载。")
-        .replace("CACHE runtime verified", "推理组件缓存校验通过，无需下载。")
-        .replace("CHECK loading model", "正在本地加载模型并检查输出字表…")
+        .replace(
+            "CACHE model verified",
+            text.settings_progress_cache_model,
+        )
+        .replace(
+            "CACHE runtime verified",
+            text.settings_progress_cache_runtime,
+        )
+        .replace("CHECK loading model", text.settings_progress_check)
 }
 pub(super) unsafe extern "system" fn window_proc(
     hwnd: Handle,
@@ -178,14 +202,38 @@ pub(super) unsafe extern "system" fn window_proc(
         GetClientRect(hwnd, &mut r);
         FillRect(dc, &r, ctx.theme.white_brush());
         let d = ctx.dpi;
-        for(text,x,y,width,height)in[("识别引擎",20,16,490,24),("模型下载源",20,86,490,24),("识别刷新率",20,155,490,24),("Windows OCR 使用系统简体中文识别功能，无需随程序打包模型。\nPP-OCR 下载约 4.46 MB 模型和约 17 MB 推理组件，仅首次需要。\n实际刷新速度受 OCR 耗时和选区数量影响，下载后可离线使用。",20,222,490,78)]{paint::text(dc,ctx.theme.body,0x3b291e,text,paint::rect(d,x,y,width,height),0x10);}
-        if let Ok(state) = ctx.state.try_borrow() {
+        let t = ctx.text;
+        for (label, x, y) in [
+            (t.settings_ui_language, 20, 12),
+            (t.settings_game_language, 268, 12),
+            (t.settings_engine, 20, 72),
+            (t.settings_source, 20, 132),
+            (t.settings_refresh, 20, 192),
+        ] {
             paint::text(
                 dc,
                 ctx.theme.body,
+                0x3b291e,
+                label,
+                paint::rect(d, x, y, 240, 24),
+                0x20,
+            );
+        }
+        paint::text(
+            dc,
+            ctx.theme.small,
+            0x3b291e,
+            t.settings_help,
+            paint::rect(d, 20, 258, 500, 96),
+            0x10,
+        );
+        if let Ok(state) = ctx.state.try_borrow() {
+            paint::text(
+                dc,
+                ctx.theme.small,
                 if state.ready { 0x698405 } else { 0x8b6540 },
                 &state.status,
-                paint::rect(d, 20, 312, 490, 88),
+                paint::rect(d, 20, 360, 500, 60),
                 0x10,
             );
         }
@@ -215,6 +263,23 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_COMMAND => {
             let id = w & 0xffff;
             let notification = w >> 16;
+            if id == 213 && notification == 1 {
+                if let Some(lang) = Language::ALL
+                    .get(SendMessageW(GetDlgItem(hwnd, 213), 0x147, 0, 0) as usize)
+                {
+                    state.value.ui_language = *lang;
+                }
+                return 0; // The dialog keeps its current text until Apply.
+            }
+            if id == 214 && notification == 1 {
+                if let Some(lang) = Language::ALL
+                    .get(SendMessageW(GetDlgItem(hwnd, 214), 0x147, 0, 0) as usize)
+                {
+                    state.value.game_language = *lang;
+                }
+                state.prepare(hwnd, ctx.text);
+                return 0;
+            }
             if id == 212 && notification == 1 {
                 let index = SendMessageW(GetDlgItem(hwnd, 212), 0x147, 0, 0);
                 if let Some(ms) = engines::REFRESH_INTERVALS_MS.get(index as usize) {
@@ -237,7 +302,7 @@ pub(super) unsafe extern "system" fn window_proc(
                     GetDlgItem(hwnd, 211),
                     i32::from(state.value.engine == Engine::PaddleTiny),
                 );
-                state.prepare(hwnd);
+                state.prepare(hwnd, ctx.text);
                 return 0;
             }
             if notification == 0 {
@@ -251,7 +316,7 @@ pub(super) unsafe extern "system" fn window_proc(
                         state.closed = true;
                         ShowWindow(hwnd, 0);
                     }
-                    203 => state.prepare(hwnd),
+                    203 => state.prepare(hwnd, ctx.text),
                     204 => {
                         let file = if state.value.engine == Engine::Windows {
                             "ms-settings:regionlanguage".to_owned()
@@ -261,7 +326,21 @@ pub(super) unsafe extern "system" fn window_proc(
                                 .unwrap_or_default()
                         };
                         if state.value.engine == Engine::Windows {
-                            MessageBoxW(hwnd,wide("在 Windows 语言设置中打开简体中文的语言选项，安装‘光学字符识别’。完成后回到这里点击重试。系统可能要求管理员权限。若系统不支持此功能，请选择 PP-OCR。 ").as_ptr(),wide("安装系统中文 OCR").as_ptr(),0x40);
+                            let language = state.value.game_language.native_name();
+                            MessageBoxW(
+                                hwnd,
+                                wide(&i18n::fill(
+                                    ctx.text.settings_install_body,
+                                    &[("lang", language)],
+                                ))
+                                .as_ptr(),
+                                wide(&i18n::fill(
+                                    ctx.text.settings_install_title,
+                                    &[("lang", language)],
+                                ))
+                                .as_ptr(),
+                                0x40,
+                            );
                         }
                         ShellExecuteW(
                             hwnd,
@@ -285,7 +364,9 @@ pub(super) unsafe extern "system" fn window_proc(
                 .unwrap_or_default();
             for update in updates {
                 match update {
-                    Ok(s) if s.starts_with("PROGRESS:") => state.status = progress_text(&s),
+                    Ok(s) if s.starts_with("PROGRESS:") => {
+                        state.status = progress_text(&s, ctx.text)
+                    }
                     Ok(s) => {
                         state.ready = true;
                         state.status = s;
@@ -293,7 +374,7 @@ pub(super) unsafe extern "system" fn window_proc(
                     }
                     Err(e) => {
                         state.ready = false;
-                        state.status = format!("准备失败：{e}");
+                        state.status = i18n::fill(ctx.text.settings_failed, &[("error", &e)]);
                     }
                 }
                 InvalidateRect(hwnd, null(), 0);
@@ -313,30 +394,32 @@ pub(super) unsafe fn edit(
     value: EngineSettings,
     theme: Rc<paint::Theme>,
     dpi: u32,
+    language: Language,
 ) -> Result<Option<EngineSettings>, String> {
+    let text = i18n::strings(language);
     let hwnd = CreateWindowExW(
         0,
         wide("PokeMMOHintSettings").as_ptr(),
-        wide("识别设置").as_ptr(),
+        wide(text.settings_title).as_ptr(),
         0x00c80000,
         200,
         160,
         paint::px(550, dpi),
-        paint::px(488, dpi),
+        paint::px(482, dpi),
         parent,
         0,
         GetModuleHandleW(null()),
         null(),
     );
     if hwnd == 0 {
-        return Err("无法打开设置窗口".to_owned());
+        return Err(text.settings_open_failed.to_owned());
     }
     let mut tips = tooltips::Tooltips::new(hwnd, theme.clone(), dpi);
     for (id, label, x) in [
-        (201, "应用识别引擎", 20),
-        (203, "检测或重试下载", 74),
-        (204, "系统语言设置／打开模型缓存", 128),
-        (202, "取消设置", 478),
+        (201, text.settings_apply, 20),
+        (203, text.settings_retry, 74),
+        (204, text.settings_system_language, 128),
+        (202, text.settings_cancel, 478),
     ] {
         let b = control(
             hwnd,
@@ -345,34 +428,57 @@ pub(super) unsafe fn edit(
             0,
             id,
             paint::px(x, dpi),
-            paint::px(408, dpi),
+            paint::px(430, dpi),
             paint::px(40, dpi),
             paint::px(36, dpi),
         );
         tips.add(b);
     }
-    for (id, y, labels, index) in [
+    for (id, y, x, width, labels, index) in [
+        (
+            213,
+            38,
+            20,
+            240,
+            Language::ALL
+                .iter()
+                .map(|lang| lang.native_name())
+                .collect::<Vec<_>>(),
+            value.ui_language.index(),
+        ),
+        (
+            214,
+            38,
+            268,
+            250,
+            Language::ALL
+                .iter()
+                .map(|lang| lang.native_name())
+                .collect::<Vec<_>>(),
+            value.game_language.index(),
+        ),
         (
             210,
-            46,
-            vec!["Windows 中文 OCR（系统内置）", "PP-OCRv6 tiny（按需下载）"],
+            98,
+            20,
+            498,
+            vec![text.settings_engine_windows, text.settings_engine_paddle],
             usize::from(value.engine == Engine::PaddleTiny),
         ),
         (
             211,
-            116,
-            vec!["HF 镜像优先（hf-mirror.com）", "Hugging Face 官方优先"],
+            158,
+            20,
+            498,
+            vec![text.settings_source_mirror, text.settings_source_official],
             usize::from(value.source == DownloadSource::Official),
         ),
         (
             212,
-            182,
-            vec![
-                "0.5 次/秒（每 2 秒）",
-                "1 次/秒（每 1 秒，默认）",
-                "2 次/秒（每 0.5 秒）",
-                "4 次/秒（每 0.25 秒）",
-            ],
+            218,
+            20,
+            498,
+            text.settings_refresh_options.to_vec(),
             engines::REFRESH_INTERVALS_MS
                 .iter()
                 .position(|ms| *ms == value.refresh_interval_ms)
@@ -385,10 +491,10 @@ pub(super) unsafe fn edit(
             "",
             0x00210003,
             id,
-            paint::px(20, dpi),
+            paint::px(x, dpi),
             paint::px(y, dpi),
-            paint::px(498, dpi),
-            paint::px(220, dpi),
+            paint::px(width, dpi),
+            paint::px(200, dpi),
         );
         for label in labels {
             SendMessageW(combo, 0x143, 0, wide(label).as_ptr() as isize);
@@ -414,12 +520,13 @@ pub(super) unsafe fn edit(
         tips: RefCell::new(tips),
         theme,
         dpi,
+        text,
     });
     SetWindowLongPtrW(hwnd, USER_DATA, (&*context as *const Context) as isize);
     EnableWindow(parent, 0);
     SetTimer(hwnd, 1, 150, null());
     ShowWindow(hwnd, 5);
-    context.state.borrow_mut().prepare(hwnd);
+    context.state.borrow_mut().prepare(hwnd, text);
     let mut msg = Msg::default();
     let mut quit = None;
     loop {
@@ -465,8 +572,9 @@ mod tests {
     #[test]
     fn system_close_exits_the_settings_modal_loop() {
         unsafe {
-            register("PokeMMOHintSettingsCloseTest", window_proc).unwrap();
-            register("PokeMMOHintButtonTip", tooltips::window_proc).unwrap();
+            let text = i18n::strings(Language::Zh);
+            register("PokeMMOHintSettingsCloseTest", window_proc, text).unwrap();
+            register("PokeMMOHintButtonTip", tooltips::window_proc, text).unwrap();
             let hwnd = CreateWindowExW(
                 0,
                 wide("PokeMMOHintSettingsCloseTest").as_ptr(),
@@ -497,6 +605,7 @@ mod tests {
                 tips: RefCell::new(tooltips::Tooltips::new(hwnd, theme.clone(), 96)),
                 theme,
                 dpi: 96,
+                text,
             });
             SetWindowLongPtrW(hwnd, USER_DATA, (&*context as *const Context) as isize);
             ShowWindow(hwnd, 5);

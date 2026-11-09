@@ -1,6 +1,6 @@
 use super::*;
 use pokemmo_hint::history::MAX_HISTORY;
-use pokemmo_hint::{TypeEffect, TYPE_NAMES};
+use pokemmo_hint::{type_name, Language, TypeEffect};
 
 pub(super) fn px(value: i32, dpi: u32) -> i32 {
     (value as i64 * dpi as i64 / 96) as i32
@@ -124,6 +124,8 @@ pub(super) fn rect(dpi: u32, x: i32, y: i32, w: i32, h: i32) -> Rect {
 struct CardView<'a> {
     theme: &'a Theme,
     dpi: u32,
+    lang: Language,
+    text: &'static Strings,
 }
 
 unsafe fn chip(
@@ -147,7 +149,7 @@ unsafe fn chip(
     text(dc, app.theme.body, color, label, r, 1 | 4 | 0x20);
     width
 }
-fn effect_label(item: &TypeEffect) -> String {
+fn effect_label(item: &TypeEffect, lang: Language) -> String {
     let suffix = match item.multiplier {
         4.0 => "×4",
         2.0 => "×2",
@@ -155,21 +157,33 @@ fn effect_label(item: &TypeEffect) -> String {
         0.25 => "×¼",
         _ => "",
     };
-    format!("{}{}", TYPE_NAMES[item.type_id], suffix)
+    format!("{}{}", type_name(lang, item.type_id), suffix)
 }
-unsafe fn effects_end(dc: Handle, theme: &Theme, dpi: u32, items: &[TypeEffect], y: i32) -> i32 {
-    let (mut x, mut line) = (px(106, dpi), px(y, dpi));
+unsafe fn effects_end(
+    dc: Handle,
+    theme: &Theme,
+    dpi: u32,
+    items: &[TypeEffect],
+    y: i32,
+    lang: Language,
+) -> i32 {
+    let (mut x, mut line) = (px(176, dpi), px(y, dpi));
     for item in items {
-        let width = measure(dc, theme.body, &effect_label(item)) + px(14, dpi);
+        let width = measure(dc, theme.body, &effect_label(item, lang)) + px(14, dpi);
         if x + width > px(578, dpi) {
-            x = px(106, dpi);
+            x = px(176, dpi);
             line += px(35, dpi);
         }
         x += width + px(5, dpi);
     }
     (line * 96 / dpi as i32) + 40
 }
-pub(super) unsafe fn card_height(theme: &Theme, dpi: u32, card: &HintCard) -> i32 {
+pub(super) unsafe fn card_height(
+    theme: &Theme,
+    dpi: u32,
+    card: &HintCard,
+    lang: Language,
+) -> i32 {
     let dc = GetDC(0);
     let mut y = 215;
     for items in [
@@ -178,7 +192,7 @@ pub(super) unsafe fn card_height(theme: &Theme, dpi: u32, card: &HintCard) -> i3
         &card.resistances,
         &card.immunities,
     ] {
-        y = effects_end(dc, theme, dpi, items, y) + 7;
+        y = effects_end(dc, theme, dpi, items, y, lang) + 7;
     }
     ReleaseDC(0, dc);
     y - 7 - 136 + 12
@@ -193,14 +207,14 @@ unsafe fn effects(
     color: u32,
 ) -> i32 {
     let dpi = app.dpi;
-    let mut x = px(106, dpi);
+    let mut x = px(176, dpi);
     let mut line = px(y, dpi);
     text(
         dc,
         app.theme.body,
         color,
         label,
-        rect(dpi, 40, y, 60, 30),
+        rect(dpi, 40, y, 124, 30),
         4 | 0x20,
     );
     if items.is_empty() {
@@ -208,17 +222,17 @@ unsafe fn effects(
             dc,
             app.theme.body,
             MUTED,
-            "无",
-            rect(dpi, 106, y, 430, 30),
+            app.text.card_none,
+            rect(dpi, 176, y, 360, 30),
             4 | 0x20,
         );
         return y + 40;
     }
     for item in items {
-        let label = effect_label(item);
+        let label = effect_label(item, app.lang);
         let width = measure(dc, app.theme.body, &label) + px(14, dpi);
         if x + width > px(578, dpi) {
-            x = px(106, dpi);
+            x = px(176, dpi);
             line += px(35, dpi);
         }
         x += chip(dc, app, &label, x, line, fill, color) + px(5, dpi);
@@ -231,11 +245,12 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
     FillRect(dc, &area, brush);
     DeleteObject(brush);
     let dpi = app.dpi;
+    let t = app.text;
     text(
         dc,
         app.theme.title,
         INK,
-        "属性速查",
+        t.title,
         rect(dpi, 20, 13, 170, 35),
         0x20,
     );
@@ -243,18 +258,20 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         dc,
         app.theme.small,
         MUTED,
-        &format!(
-            "{} 个选区 · {}",
-            app.settings.selections.len(),
-            app.engine_settings.engine.label()
+        &i18n::fill(
+            t.region_count,
+            &[
+                ("n", &app.settings.selections.len().to_string()),
+                ("engine", app.engine_settings.engine.label(app.language)),
+            ],
         ),
         rect(dpi, 195, 24, 250, 22),
         0x20,
     );
     let state = if !app.workers.is_empty() {
-        "● 识别中"
+        t.state_running
     } else {
-        "○ 已暂停"
+        t.state_paused
     };
     text(
         dc,
@@ -295,7 +312,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         dc,
         app.theme.heading,
         INK,
-        "识别历史",
+        t.history_title,
         rect(dpi, HISTORY_LEFT + 12, HISTORY_TOP + 10, 140, 24),
         0x20,
     );
@@ -312,7 +329,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             dc,
             app.theme.body,
             MUTED,
-            "暂无识别记录",
+            t.history_empty,
             rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 190, HISTORY_WIDTH - 16, 26),
             1 | 0x20,
         );
@@ -320,7 +337,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             dc,
             app.theme.small,
             MUTED,
-            "识别成功后自动记录，最多 20 条，最新的在最上面；点击列表查看详情。",
+            t.history_hint,
             rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 220, HISTORY_WIDTH - 16, 72),
             1 | 0x10,
         );
@@ -333,6 +350,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             card,
             px(20, app.dpi),
             px(136, app.dpi),
+            app.language,
         );
     } else {
         rounded(
@@ -343,11 +361,11 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             px(18, dpi),
         );
         let title = if app.suggestion.is_some() {
-            "找到一个可能的物种"
+            t.suggestion_title
         } else if !app.workers.is_empty() {
-            "等待可靠的识别结果"
+            t.running_title
         } else {
-            "准备好后，开始识别"
+            t.idle_title
         };
         text(
             dc,
@@ -370,7 +388,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         dc,
         app.theme.small,
         MUTED,
-        "手动查询",
+        t.manual_query,
         rect(dpi, 22, 410 + app.card_height - 258, 120, 19),
         0x20,
     );
@@ -379,7 +397,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             dc,
             app.theme.small,
             MUTED,
-            "支持中文名字、No.573 或全国编号",
+            t.query_hint,
             rect(dpi, 327, 442, 271, 22),
             0x20 | 0x8000,
         );
@@ -420,7 +438,11 @@ pub(super) unsafe fn button(item: &DrawItem, theme: &Theme, dpi: u32) {
         px(9, dpi),
     );
     let index = match item.id {
-        102 => usize::from(get_text(item.hwnd) == "暂停识别"),
+        102 => usize::from(
+            Language::ALL
+                .iter()
+                .any(|lang| i18n::strings(*lang).pause == get_text(item.hwnd)),
+        ),
         101 => 2,
         103 => 3,
         107 => 4,
@@ -500,8 +522,9 @@ pub(super) unsafe fn draw_card(
     card: &HintCard,
     x: i32,
     y: i32,
+    lang: Language,
 ) {
-    draw_card_content(dc, theme, dpi, card, (x, y), true);
+    draw_card_content(dc, theme, dpi, card, (x, y), true, lang);
 }
 pub(super) unsafe fn draw_bubble_card(
     dc: Handle,
@@ -510,9 +533,10 @@ pub(super) unsafe fn draw_bubble_card(
     card: &HintCard,
     body: Rect,
     tail: pokemmo_hint::regions::BubbleTail,
+    lang: Language,
 ) {
     bubble(dc, body, tail, dpi, WHITE, BORDER, 18);
-    draw_card_content(dc, theme, dpi, card, (body.left, body.top), false);
+    draw_card_content(dc, theme, dpi, card, (body.left, body.top), false, lang);
 }
 unsafe fn bubble(
     dc: Handle,
@@ -557,15 +581,21 @@ unsafe fn draw_card_content(
     card: &HintCard,
     origin: (i32, i32),
     background: bool,
+    lang: Language,
 ) {
     let (x, y) = origin;
-    let app = &CardView { theme, dpi };
+    let app = &CardView {
+        theme,
+        dpi,
+        lang,
+        text: i18n::strings(lang),
+    };
     let saved = SaveDC(dc);
     SetViewportOrgEx(dc, x - px(20, dpi), y - px(136, dpi), null_mut());
     if background {
         rounded(
             dc,
-            rect(dpi, 20, 136, 580, card_height(theme, dpi, card)),
+            rect(dpi, 20, 136, 580, card_height(theme, dpi, card, lang)),
             WHITE,
             BORDER,
             px(18, dpi),
@@ -581,7 +611,7 @@ unsafe fn draw_card_content(
     );
     let mut right = px(578, dpi);
     for &kind in card.types.iter().rev() {
-        let label = TYPE_NAMES[kind];
+        let label = type_name(app.lang, kind);
         let width = measure(dc, app.theme.body, label) + px(14, dpi);
         let color = match kind {
             9 => rgb(185, 28, 28),
@@ -607,7 +637,7 @@ unsafe fn draw_card_content(
     let y = effects(
         dc,
         app,
-        "弱点",
+        app.text.card_weakness,
         &card.weaknesses,
         215,
         rgb(255, 239, 239),
@@ -616,7 +646,7 @@ unsafe fn draw_card_content(
     let y = effects(
         dc,
         app,
-        "普通伤害",
+        app.text.card_neutral,
         &card.neutral,
         y + 7,
         rgb(241, 245, 249),
@@ -625,7 +655,7 @@ unsafe fn draw_card_content(
     let y = effects(
         dc,
         app,
-        "抗性",
+        app.text.card_resistance,
         &card.resistances,
         y + 7,
         rgb(232, 248, 242),
@@ -634,7 +664,7 @@ unsafe fn draw_card_content(
     effects(
         dc,
         app,
-        "免疫",
+        app.text.card_immune,
         &card.immunities,
         y + 7,
         rgb(242, 238, 255),

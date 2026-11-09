@@ -1,3 +1,4 @@
+use crate::Language;
 use std::path::PathBuf;
 
 pub const MODEL_SHA256: &str = "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6";
@@ -10,10 +11,12 @@ pub enum Engine {
     PaddleTiny,
 }
 impl Engine {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Windows => "Windows 中文 OCR",
-            Self::PaddleTiny => "PP-OCRv6 tiny",
+    pub fn label(self, lang: Language) -> &'static str {
+        match (self, lang) {
+            (Self::Windows, Language::Zh) => "Windows 系统 OCR",
+            (Self::Windows, Language::En) => "Windows system OCR",
+            (Self::Windows, Language::Ja) => "Windows システム OCR",
+            (Self::PaddleTiny, _) => "PP-OCRv6 tiny",
         }
     }
 }
@@ -29,6 +32,8 @@ pub struct EngineSettings {
     pub engine: Engine,
     pub source: DownloadSource,
     pub refresh_interval_ms: u64,
+    pub ui_language: Language,
+    pub game_language: Language,
 }
 impl Default for EngineSettings {
     fn default() -> Self {
@@ -36,10 +41,17 @@ impl Default for EngineSettings {
             engine: Engine::Windows,
             source: DownloadSource::Mirror,
             refresh_interval_ms: 1000,
+            ui_language: Language::Zh,
+            game_language: Language::Zh,
         }
     }
 }
 impl EngineSettings {
+    /// PP-OCRv6 tiny's dictionary has no kana; only the Windows engine can read
+    /// Japanese names. Number recognition still works with either engine.
+    pub fn supports_game_language(self, lang: Language) -> bool {
+        self.engine == Engine::Windows || lang != Language::Ja
+    }
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut lines = text.lines();
         if lines.next() != Some("pokemon-ocr-engines-v1") {
@@ -53,6 +65,12 @@ impl EngineSettings {
                 ("engine", "ppocrv6-tiny") => value.engine = Engine::PaddleTiny,
                 ("source", "mirror") => value.source = DownloadSource::Mirror,
                 ("source", "official") => value.source = DownloadSource::Official,
+                ("ui_language", text) => {
+                    value.ui_language = Language::parse(text).ok_or("不支持的界面语言")?
+                }
+                ("game_language", text) => {
+                    value.game_language = Language::parse(text).ok_or("不支持的游戏语言")?
+                }
                 ("refresh_interval_ms", text) => {
                     let ms = text.parse::<u64>().map_err(|_| "识别刷新率格式错误")?;
                     if !REFRESH_INTERVALS_MS.contains(&ms) {
@@ -67,7 +85,7 @@ impl EngineSettings {
     }
     pub fn encode(self) -> String {
         format!(
-            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\n",
+            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\nui_language={}\ngame_language={}\n",
             if self.engine == Engine::Windows {
                 "windows"
             } else {
@@ -78,7 +96,9 @@ impl EngineSettings {
             } else {
                 "official"
             },
-            self.refresh_interval_ms
+            self.refresh_interval_ms,
+            self.ui_language.code(),
+            self.game_language.code(),
         )
     }
     pub fn model_urls(self) -> [String; 2] {
@@ -223,17 +243,33 @@ mod tests {
             engine: Engine::PaddleTiny,
             source: DownloadSource::Mirror,
             refresh_interval_ms: 500,
+            ui_language: Language::En,
+            game_language: Language::Ja,
         };
         assert_eq!(EngineSettings::parse(&a.encode()).unwrap(), a);
         assert!(a.model_urls()[0].starts_with("https://hf-mirror.com/"));
         assert_eq!(EngineSettings::default().engine, Engine::Windows);
         assert!(EngineSettings::parse("bad").is_err());
+        assert!(!a.supports_game_language(Language::Ja));
+        assert!(a.supports_game_language(Language::En));
         assert_eq!(
             EngineSettings::parse("pokemon-ocr-engines-v1\nengine=windows\nsource=mirror\n")
                 .unwrap()
                 .refresh_interval_ms,
             1000
         );
+        assert!(EngineSettings::parse(
+            "pokemon-ocr-engines-v1\nengine=windows\nui_language=xx\n"
+        )
+        .is_err());
+        for lang in Language::ALL {
+            let settings = EngineSettings {
+                ui_language: lang,
+                game_language: lang,
+                ..EngineSettings::default()
+            };
+            assert_eq!(EngineSettings::parse(&settings.encode()).unwrap(), settings);
+        }
         for ms in REFRESH_INTERVALS_MS {
             let settings = EngineSettings {
                 refresh_interval_ms: ms,

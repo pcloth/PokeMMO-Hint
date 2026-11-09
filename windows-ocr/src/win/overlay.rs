@@ -51,6 +51,7 @@ struct Context {
     theme: Rc<paint::Theme>,
     dpi: u32,
     full: bool,
+    lang: Language,
     content: RefCell<Content>,
 }
 pub(super) struct Window {
@@ -63,14 +64,16 @@ impl Window {
         dpi: u32,
         card: &HintCard,
         full: bool,
+        lang: Language,
     ) -> Result<Self, String> {
         let context = Box::new(Context {
             theme,
             dpi,
             full,
+            lang,
             content: RefCell::new(Content {
                 card: card.clone(),
-                label: pokemmo_hint::regions::first_weakness(card),
+                label: pokemmo_hint::regions::first_weakness(card, lang),
                 tail: None,
             }),
         });
@@ -89,7 +92,7 @@ impl Window {
             null(),
         );
         if hwnd == 0 {
-            return Err("无法创建浮动标签".to_owned());
+            return Err(i18n::strings(lang).error_overlay.to_owned());
         }
         SetWindowLongPtrW(hwnd, USER_DATA, (&*context as *const Context) as isize);
         SetLayeredWindowAttributes(hwnd, 0xff00ff, 255, 1);
@@ -100,7 +103,7 @@ impl Window {
         let mut content = self.context.content.borrow_mut();
         if content.card.id != card.id {
             content.card = card.clone();
-            content.label = pokemmo_hint::regions::first_weakness(card);
+            content.label = pokemmo_hint::regions::first_weakness(card, self.context.lang);
             InvalidateRect(self.hwnd, null(), 0);
         }
     }
@@ -113,6 +116,7 @@ impl Window {
                         &self.context.theme,
                         self.context.dpi,
                         &self.context.content.borrow().card,
+                        self.context.lang,
                     ) + 20,
                     self.context.dpi,
                 ),
@@ -211,7 +215,15 @@ pub(super) unsafe extern "system" fn window_proc(
                     bottom: area.bottom - padding,
                 };
                 if ctx.full {
-                    paint::draw_bubble_card(dc, &ctx.theme, ctx.dpi, &content.card, body, tail);
+                    paint::draw_bubble_card(
+                        dc,
+                        &ctx.theme,
+                        ctx.dpi,
+                        &content.card,
+                        body,
+                        tail,
+                        ctx.lang,
+                    );
                 } else {
                     paint::draw_tag(dc, &ctx.theme, ctx.dpi, &content.label, body, tail);
                 }

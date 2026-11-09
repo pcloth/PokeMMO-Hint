@@ -7,16 +7,18 @@ use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap, white_text_bitmap};
 use pokemmo_hint::engines::{self, EngineSettings};
 use pokemmo_hint::history::History;
 use pokemmo_hint::{
-    hint_card, lookup_query, resolve_reads, species_data, HintCard, MatchResult, NameSuggestion,
-    Roi, Tracker,
+    hint_card, lookup_query, resolve_reads, species_data, HintCard, Language, MatchResult,
+    NameSuggestion, Roi, Tracker,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
+mod i18n;
 mod overlay;
 mod paint;
 mod selection_edit;
 mod settings;
 mod tooltips;
+use i18n::Strings;
 use pokemmo_hint::regions::{Bounds, RegionSettings, Selection, MAX_REGIONS};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -192,6 +194,7 @@ extern "system" {
 extern "system" {
     fn GetModuleHandleW(name: *const u16) -> Handle;
     fn GetLocalTime(time: *mut SystemTimeFields);
+    fn GetUserDefaultUILanguage() -> u16;
 }
 #[link(name = "gdi32")]
 extern "system" {
@@ -316,6 +319,15 @@ fn local_clock() -> String {
         time.month, time.day, time.hour, time.minute
     )
 }
+fn system_language() -> Language {
+    let primary = unsafe { GetUserDefaultUILanguage() } & 0x3ff;
+    match primary {
+        0x04 => Language::Zh,
+        0x09 => Language::En,
+        0x11 => Language::Ja,
+        _ => Language::Zh,
+    }
+}
 
 unsafe fn desktop_bounds() -> Bounds {
     Bounds {
@@ -325,8 +337,10 @@ unsafe fn desktop_bounds() -> Bounds {
         height: GetSystemMetrics(79),
     }
 }
-unsafe fn screen_rect(selected: Selection) -> Result<Rect, String> {
-    selected.screen_bounds(desktop_bounds()).map(overlay::rect)
+unsafe fn screen_rect(selected: Selection, lang: Language) -> Result<Rect, String> {
+    selected
+        .screen_bounds_for(desktop_bounds(), lang)
+        .map(overlay::rect)
 }
 fn intersects(a: Rect, b: Rect) -> bool {
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
@@ -370,6 +384,8 @@ struct App {
     start: Handle,
     settings: RegionSettings,
     engine_settings: EngineSettings,
+    language: Language,
+    text: &'static Strings,
     selector: Handle,
     history: History,
     history_list: Handle,
@@ -403,7 +419,7 @@ impl App {
             bounds.clear();
         }
         unsafe {
-            set_text(self.start, "开始识别");
+            set_text(self.start, self.text.start);
             InvalidateRect(self.hwnd, null(), 0);
         }
     }
@@ -421,7 +437,10 @@ impl App {
         unsafe {
             if let Some(s) = &self.suggestion {
                 if let Some(species) = species_data().iter().find(|p| p.id == s.id) {
-                    set_text(self.confirm, &format!("确认为 {}", species.name));
+                    set_text(
+                        self.confirm,
+                        &i18n::fill(self.text.confirm_named, &[("name", species.name(self.language))]),
+                    );
                     ShowWindow(self.confirm, 5);
                 }
             } else {
@@ -438,7 +457,7 @@ impl App {
             let height = self
                 .card
                 .as_ref()
-                .map(|card| paint::card_height(&self.theme, self.dpi, card))
+                .map(|card| paint::card_height(&self.theme, self.dpi, card, self.language))
                 .unwrap_or(258)
                 .max(258);
             if height == self.card_height {
@@ -497,7 +516,7 @@ impl App {
                 }
             }
         }
-        save_settings(&self.settings)
+        save_settings(&self.settings, self.text)
     }
     fn rebuild_selector(&self) {
         unsafe {
@@ -507,7 +526,7 @@ impl App {
                     self.selector,
                     0x143,
                     0,
-                    wide(&self.settings.name(i)).as_ptr() as isize,
+                    wide(&self.settings.name_for(i, self.language)).as_ptr() as isize,
                 );
             }
             if !self.settings.selections.is_empty() {
@@ -523,17 +542,19 @@ impl App {
         if let Some(update) = self.slots.get(index).and_then(|s| s.last.clone()) {
             self.status(&format!(
                 "{} · {}",
-                self.settings.name(index),
+                self.settings.name_for(index, self.language),
                 update.status
             ));
             self.content(&update.body, update.card, update.suggestion);
         } else {
-            self.status(&format!(
-                "已保存 {} 个选区；当前查看选区 {}",
-                self.settings.selections.len(),
-                index + 1
+            self.status(&i18n::fill(
+                self.text.status_saved_regions,
+                &[
+                    ("n", &self.settings.selections.len().to_string()),
+                    ("i", &(index + 1).to_string()),
+                ],
             ));
-            self.content("开始识别后，每个选区会独立显示弱点标签。", None, None);
+            self.content(self.text.body_waiting, None, None);
         }
     }
     fn refresh_history(&mut self) {
@@ -541,11 +562,16 @@ impl App {
             SendMessageW(self.history_list, 0x184, 0, 0); // LB_RESETCONTENT
             let data = species_data();
             for entry in self.history.entries() {
+                let unknown = match self.language {
+                    Language::Zh => "未知",
+                    Language::En => "Unknown",
+                    Language::Ja => "不明",
+                };
                 let name = data
                     .iter()
                     .find(|species| species.id == entry.id)
-                    .map(|species| species.name.as_str())
-                    .unwrap_or("未知");
+                    .map(|species| species.name(self.language))
+                    .unwrap_or(unknown);
                 let label = format!("{}  #{:03} {}", entry.clock, entry.id, name);
                 SendMessageW(
                     self.history_list,
@@ -576,24 +602,96 @@ impl App {
         };
         // Keep the stored card on screen instead of the next polling result.
         self.manual_preview = true;
-        self.content("", Some(hint_card(species)), None);
-        self.status(&format!(
-            "历史记录 · #{:03} {} · {}",
-            entry.id, species.name, entry.region
+        self.content("", Some(hint_card(species, self.language)), None);
+        let id = format!("#{:03}", entry.id);
+        self.status(&i18n::fill(
+            self.text.status_history,
+            &[
+                ("id", &id),
+                ("name", species.name(self.language)),
+                ("region", &entry.region),
+            ],
         ));
+    }
+    fn apply_language(&mut self, language: Language) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        self.text = i18n::strings(language);
+        unsafe {
+            set_text(self.hwnd, self.text.app_title);
+            set_text(
+                self.start,
+                if self.workers.is_empty() {
+                    self.text.start
+                } else {
+                    self.text.pause
+                },
+            );
+            for (id, label) in [
+                (101, self.text.add_region),
+                (103, self.text.delete_region),
+                (107, self.text.clear_regions),
+                (104, self.text.query),
+                (106, self.text.confirm),
+                (110, self.text.edit_region),
+                (109, self.text.save_name),
+                (111, self.text.settings),
+            ] {
+                set_text(GetDlgItem(self.hwnd, id), label);
+            }
+            SendMessageW(
+                self.edit,
+                0x1501,
+                0,
+                wide(self.text.edit_placeholder).as_ptr() as isize,
+            );
+            if let Some(candidate) = &self.suggestion {
+                if let Some(species) = species_data().iter().find(|p| p.id == candidate.id) {
+                    set_text(
+                        self.confirm,
+                        &i18n::fill(
+                            self.text.confirm_named,
+                            &[("name", species.name(self.language))],
+                        ),
+                    );
+                }
+            }
+        }
+        self.rebuild_selector();
+        self.refresh_history();
+        self.layout_card();
+        if self.manual_preview {
+            self.status(self.text.status_language_applied);
+        } else {
+            self.preview();
+        }
+        unsafe {
+            InvalidateRect(self.hwnd, null(), 0);
+        }
     }
     fn start(&mut self) -> Result<(), String> {
         self.halt();
         self.manual_preview = false;
         if self.settings.selections.is_empty() {
-            return Err("请先添加至少一个选区".to_owned());
+            return Err(self.text.error_need_region.to_owned());
         }
         if self.settings.selections.len() > MAX_REGIONS {
-            return Err(format!("最多支持 {MAX_REGIONS} 个选区"));
+            return Err(i18n::fill(
+                self.text.status_max_regions,
+                &[("n", &MAX_REGIONS.to_string())],
+            ));
         }
-        let config = Backend::selected(self.engine_settings)?;
+        let config = Backend::selected(self.engine_settings).map_err(|e| {
+            if e == "PADDLE_NOT_READY" {
+                self.text.error_paddle_not_ready.to_owned()
+            } else {
+                e
+            }
+        })?;
         for s in &self.settings.selections {
-            s.roi.validate(s.width, s.height)?;
+            s.roi.validate_for(s.width, s.height, self.language)?;
         }
         self.stop = Arc::new(AtomicBool::new(false));
         self.slots = (0..self.settings.selections.len())
@@ -619,17 +717,20 @@ impl App {
                 tx: tx.clone(),
                 confirmed: self.confirmed.clone(),
                 occlusions: self.occlusions.clone(),
+                text: self.text,
+                language: self.language,
+                game_language: self.engine_settings.game_language,
             };
             self.workers
                 .push(thread::spawn(move || watch(context, selections)));
         }
         unsafe {
-            set_text(self.start, "暂停识别");
+            set_text(self.start, self.text.pause);
         }
-        self.content("正在读取画面，请稍候…", None, None);
-        self.status(&format!(
-            "持续识别 {} 个选区；可最小化此窗口。",
-            self.settings.selections.len()
+        self.content(self.text.status_reading, None, None);
+        self.status(&i18n::fill(
+            self.text.status_continuous,
+            &[("n", &self.settings.selections.len().to_string())],
         ));
         Ok(())
     }
@@ -661,15 +762,21 @@ impl App {
                 if slot.updated.elapsed() > Duration::from_secs(15) && slot.last.take().is_some() {
                     expired = true;
                 }
-                let region = screen_rect(*selection).ok();
+                let region = screen_rect(*selection, self.language).ok();
                 if let Some(r) = region {
                     obstacles.push(overlay::bounds(r));
                 }
                 let card = slot.last.as_ref().and_then(|u| u.card.clone());
                 if let (Some(card), Some(region)) = (card, region) {
                     if slot.tag.is_none() {
-                        slot.tag =
-                            overlay::Window::new(self.theme.clone(), self.dpi, &card, false).ok();
+                        slot.tag = overlay::Window::new(
+                            self.theme.clone(),
+                            self.dpi,
+                            &card,
+                            false,
+                            self.language,
+                        )
+                        .ok();
                     }
                     if let Some(tag) = &mut slot.tag {
                         tag.set_card(&card);
@@ -711,8 +818,14 @@ impl App {
                 .and_then(|index| visible.iter().find(|(i, _, _, _)| *i == index));
             if let Some((_, card, region, _)) = hovered {
                 if self.details.is_none() {
-                    self.details =
-                        overlay::Window::new(self.theme.clone(), self.dpi, card, true).ok();
+                    self.details = overlay::Window::new(
+                        self.theme.clone(),
+                        self.dpi,
+                        card,
+                        true,
+                        self.language,
+                    )
+                    .ok();
                 }
                 if let Some(details) = &mut self.details {
                     details.set_card(card);
@@ -796,6 +909,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
             0
         } // SIZE_RESTORED: results may arrive while minimized.
         WM_COMMAND => {
+            let t = app.text;
             let id = w & 0xffff;
             let notification = w >> 16;
             if id == 108 && notification == 1 {
@@ -822,13 +936,16 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
             match id {
                 101 => {
                     if app.settings.selections.len() >= MAX_REGIONS {
-                        app.status(&format!("最多支持 {MAX_REGIONS} 个选区"));
+                        app.status(&i18n::fill(
+                            t.status_max_regions,
+                            &[("n", &MAX_REGIONS.to_string())],
+                        ));
                         return 0;
                     }
                     let resume = !app.workers.is_empty();
                     app.halt();
                     app.manual_preview = false;
-                    match choose_roi(hwnd) {
+                    match choose_roi(hwnd, app.language, app.text) {
                         Ok(Some(selection)) => {
                             app.settings.selections.push(selection);
                             let count = app.settings.selections.len();
@@ -836,12 +953,15 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                             app.settings.selected = app.settings.selections.len() - 1;
                             app.rebuild_selector();
                             if let Err(e) = app.persist() {
-                                app.status(&format!("选区已添加，但保存失败：{e}"));
+                                app.status(&i18n::fill(
+                                    t.error_add_save,
+                                    &[("error", &e)],
+                                ));
                             } else {
                                 app.preview();
                             }
                         }
-                        Ok(None) => app.status("已取消添加，原选区保留。"),
+                        Ok(None) => app.status(t.status_add_cancelled),
                         Err(e) => app.status(&e),
                     }
                     if resume {
@@ -853,15 +973,31 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 111 => {
                     let resume = !app.workers.is_empty();
                     app.halt();
-                    match settings::edit(hwnd, app.engine_settings, app.theme.clone(), app.dpi) {
+                    match settings::edit(
+                        hwnd,
+                        app.engine_settings,
+                        app.theme.clone(),
+                        app.dpi,
+                        app.language,
+                    ) {
                         Ok(Some(value)) => match engines::save_settings(value) {
                             Ok(()) => {
+                                let previous_language = app.language;
                                 app.engine_settings = value;
-                                app.status("识别设置已保存。");
+                                if value.ui_language != previous_language {
+                                    app.apply_language(value.ui_language);
+                                }
+                                app.status(t.status_settings_saved);
+                                if !value.supports_game_language(value.game_language) {
+                                    app.status(t.status_ppocr_ja);
+                                }
                             }
-                            Err(e) => app.status(&format!("保存设置失败：{e}")),
+                            Err(e) => app.status(&i18n::fill(
+                                t.error_settings_save,
+                                &[("error", &e)],
+                            )),
                         },
-                        Ok(None) => app.status("已取消设置。"),
+                        Ok(None) => app.status(t.status_settings_cancelled),
                         Err(e) => app.status(&e),
                     }
                     if resume {
@@ -873,8 +1009,8 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 102 => {
                     if !app.workers.is_empty() {
                         app.halt();
-                        app.status("已暂停，浮动标签已隐藏。");
-                        app.content("可继续添加选区，或使用下方查询。", None, None);
+                        app.status(t.status_paused);
+                        app.content(t.body_paused, None, None);
                     } else {
                         app.clear_history_selection();
                         match app.start() {
@@ -913,10 +1049,10 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 110 => {
                     let index = app.settings.selected;
                     let Some(selected) = app.settings.selections.get(index).copied() else {
-                        app.status("请先添加或选择一个选区。");
+                        app.status(t.error_need_region);
                         return 0;
                     };
-                    let name = app.settings.name(index);
+                    let name = app.settings.name_for(index, app.language);
                     let others = app
                         .settings
                         .selections
@@ -927,16 +1063,22 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         .collect();
                     let resume = !app.workers.is_empty();
                     app.halt();
-                    match selection_edit::edit(hwnd, selected, name, others) {
+                    match selection_edit::edit(
+                        hwnd,
+                        selected,
+                        name,
+                        others,
+                        app.language,
+                    ) {
                         Ok(Some(selection)) => {
                             app.settings.selections[index] = selection;
                             if let Err(e) = app.persist() {
                                 app.status(&e);
                             } else {
-                                app.status("选区位置和大小已保存。");
+                                app.status(t.status_region_saved);
                             }
                         }
-                        Ok(None) => app.status("已取消修改，保留原选区。"),
+                        Ok(None) => app.status(t.status_edit_cancelled),
                         Err(e) => app.status(&e),
                     }
                     if resume {
@@ -948,13 +1090,14 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 109 => {
                     let name = get_text(app.selector);
                     let index = app.settings.selected;
-                    match app.settings.rename(index, &name) {
+                    let language = app.language;
+                    match app.settings.rename_for(index, &name, language) {
                         Ok(()) => {
                             app.rebuild_selector();
                             if let Err(e) = app.persist() {
                                 app.status(&e);
                             } else {
-                                app.status("选区名称已保存；留空可恢复默认名称。");
+                                app.status(t.status_name_saved);
                             }
                         }
                         Err(e) => app.status(&e),
@@ -967,42 +1110,52 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                     app.settings.names.clear();
                     app.settings.selected = 0;
                     app.rebuild_selector();
-                    app.content("请添加新的识别区域。", None, None);
+                    app.content(t.body_cleared, None, None);
                     if let Err(e) = app.persist() {
                         app.status(&e);
                     } else {
-                        app.status("所有选区已清空并保存。");
+                        app.status(t.status_cleared);
                     }
                 }
                 106 => {
                     if let Some(candidate) = app.suggestion.clone() {
                         if let Ok(mut aliases) = app.confirmed.lock() {
-                            aliases.insert(candidate.observed.clone(), candidate.id);
+                            aliases.insert(
+                                pokemmo_hint::confirmed_key(
+                                    app.engine_settings.game_language,
+                                    &candidate.observed,
+                                ),
+                                candidate.id,
+                            );
                         }
-                        app.content("已确认，下次识别到相同文字时会使用这个物种。", None, None);
-                        app.status("已记住本次确认；仅在本次运行中有效。");
+                        app.content(t.body_confirmed, None, None);
+                        app.status(t.status_confirmed);
                     }
                 }
                 104 => {
                     app.manual_preview = true;
                     app.clear_history_selection();
                     let data = species_data();
-                    match lookup_query(&get_text(app.edit), &data) {
+                    match lookup_query(
+                        &get_text(app.edit),
+                        app.engine_settings.game_language,
+                        &data,
+                    ) {
                         MatchResult::Found(id) => {
+                            let language = app.language;
                             app.content(
                                 "",
-                                Some(hint_card(data.iter().find(|s| s.id == id).unwrap())),
+                                Some(hint_card(
+                                    data.iter().find(|s| s.id == id).unwrap(),
+                                    language,
+                                )),
                                 None,
                             );
-                            app.status("手动查询结果；选择选区可返回实时信息。");
+                            app.status(t.status_manual_result);
                         }
                         _ => {
-                            app.content(
-                                "未找到唯一匹配，请输入中文名或 1–649 全国编号。",
-                                None,
-                                None,
-                            );
-                            app.status("手动查询未匹配");
+                            app.content(t.body_manual_miss, None, None);
+                            app.status(t.status_manual_miss);
                         }
                     }
                 }
@@ -1031,7 +1184,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                     refresh |= index == app.settings.selected;
                 }
                 if let Some(id) = card_id {
-                    let region = app.settings.name(index);
+                    let region = app.settings.name_for(index, app.language);
                     if app.history.record(id, &region, &local_clock()) {
                         history_changed = true;
                     }
@@ -1039,7 +1192,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
             }
             if history_changed {
                 app.refresh_history();
-                let _ = save_history(&app.history);
+                let _ = save_history(&app.history, app.text);
             }
             if refresh {
                 app.preview();
@@ -1100,7 +1253,7 @@ unsafe fn control(
 fn integer_resource(id: u16) -> *const u16 {
     id as usize as *const u16
 }
-unsafe fn register(name: &str, proc: Proc) -> Result<(), String> {
+unsafe fn register(name: &str, proc: Proc, text: &Strings) -> Result<(), String> {
     let name = wide(name);
     let c = WndClass {
         style: 3,
@@ -1122,7 +1275,10 @@ unsafe fn register(name: &str, proc: Proc) -> Result<(), String> {
         class: name.as_ptr(),
     };
     if RegisterClassW(&c) == 0 {
-        return Err(format!("注册窗口失败：{}", std::io::Error::last_os_error()));
+        return Err(i18n::fill(
+            text.error_register,
+            &[("error", &std::io::Error::last_os_error().to_string())],
+        ));
     }
     Ok(())
 }
@@ -1131,7 +1287,7 @@ pub fn show_startup_error(error: &str) {
         MessageBoxW(
             0,
             wide(error).as_ptr(),
-            wide("PokeMMO 属性提示 · 启动失败").as_ptr(),
+            wide(i18n::strings(system_language()).startup_error_title).as_ptr(),
             0x10,
         );
     }
@@ -1139,17 +1295,28 @@ pub fn show_startup_error(error: &str) {
 pub fn run() -> Result<(), String> {
     unsafe {
         SetProcessDpiAwarenessContext(-4);
-        register("PokeMMOHintWindow", main_proc)?;
-        register("PokeMMOHintSelect", select_proc)?;
-        register("PokeMMOHintOverlay", overlay::window_proc)?;
-        register("PokeMMOHintEditRegion", selection_edit::window_proc)?;
-        register("PokeMMOHintButtonTip", tooltips::window_proc)?;
-        register("PokeMMOHintSettings", settings::window_proc)?;
-        let (settings, load_error) = load_settings();
+        let fresh = engines::storage_dir()
+            .map(|dir| !dir.join("ocr-settings.txt").exists())
+            .unwrap_or(false);
+        let mut engine_settings = engines::load_settings().unwrap_or_default();
+        if fresh {
+            let system = system_language();
+            engine_settings.ui_language = system;
+            engine_settings.game_language = system;
+        }
+        let language = engine_settings.ui_language;
+        let text = i18n::strings(language);
+        register("PokeMMOHintWindow", main_proc, text)?;
+        register("PokeMMOHintSelect", select_proc, text)?;
+        register("PokeMMOHintOverlay", overlay::window_proc, text)?;
+        register("PokeMMOHintEditRegion", selection_edit::window_proc, text)?;
+        register("PokeMMOHintButtonTip", tooltips::window_proc, text)?;
+        register("PokeMMOHintSettings", settings::window_proc, text)?;
+        let (settings, load_error) = load_settings(language);
         let hwnd = CreateWindowExW(
             0x8,
             wide("PokeMMOHintWindow").as_ptr(),
-            wide("PokeMMO 属性提示").as_ptr(),
+            wide(text.app_title).as_ptr(),
             0x02CA0000,
             100,
             100,
@@ -1161,7 +1328,10 @@ pub fn run() -> Result<(), String> {
             null(),
         );
         if hwnd == 0 {
-            return Err(format!("创建窗口失败：{}", std::io::Error::last_os_error()));
+            return Err(i18n::fill(
+                text.error_create_window,
+                &[("error", &std::io::Error::last_os_error().to_string())],
+            ));
         }
         let dpi = GetDpiForWindow(hwnd).max(96);
         for (kind, size) in [(0, GetSystemMetrics(49)), (1, GetSystemMetrics(11))] {
@@ -1195,8 +1365,8 @@ pub fn run() -> Result<(), String> {
         );
         let mut app = Box::new(App {
             hwnd,
-            status: "框选一行名字或 No.编号，然后开始识别。".to_owned(),
-            body: "也可以在下方输入中文名字或全国编号查询。".to_owned(),
+            status: text.status_initial.to_owned(),
+            body: text.body_initial.to_owned(),
             card: None,
             card_height: 258,
             suggestion: None,
@@ -1207,7 +1377,9 @@ pub fn run() -> Result<(), String> {
             edit: 0,
             start: 0,
             settings,
-            engine_settings: engines::load_settings().unwrap_or_default(),
+            engine_settings,
+            language,
+            text,
             selector: 0,
             history: load_history(),
             history_list: 0,
@@ -1222,10 +1394,11 @@ pub fn run() -> Result<(), String> {
             workers: Vec::new(),
         });
         let px = |value| paint::px(value, dpi);
+        let t = app.text;
         app.start = control(
             hwnd,
             "BUTTON",
-            "开始识别",
+            t.start,
             0,
             102,
             px(20),
@@ -1236,7 +1409,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "添加选区",
+            t.add_region,
             0,
             101,
             px(74),
@@ -1247,7 +1420,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "删除当前选区",
+            t.delete_region,
             0,
             103,
             px(128),
@@ -1258,7 +1431,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "清空选区",
+            t.clear_regions,
             0,
             107,
             px(182),
@@ -1278,11 +1451,11 @@ pub fn run() -> Result<(), String> {
             px(32),
         );
         SendMessageW(app.edit, 0x30, app.theme.body as usize, 1);
-        SendMessageW(app.edit, 0x1501, 0, wide("名字或编号").as_ptr() as isize);
+        SendMessageW(app.edit, 0x1501, 0, wide(t.edit_placeholder).as_ptr() as isize);
         control(
             hwnd,
             "BUTTON",
-            "查询",
+            t.query,
             0,
             104,
             px(200),
@@ -1293,7 +1466,7 @@ pub fn run() -> Result<(), String> {
         app.confirm = control(
             hwnd,
             "BUTTON",
-            "确认候选",
+            t.confirm,
             0,
             106,
             px(254),
@@ -1318,7 +1491,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "保存名称",
+            t.save_name,
             0,
             109,
             px(266),
@@ -1329,7 +1502,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "查看并调整当前选区",
+            t.edit_region,
             0,
             110,
             px(224),
@@ -1353,7 +1526,7 @@ pub fn run() -> Result<(), String> {
         control(
             hwnd,
             "BUTTON",
-            "识别设置",
+            t.settings,
             0,
             111,
             px(236),
@@ -1384,9 +1557,9 @@ pub fn run() -> Result<(), String> {
             SetWindowPos(hwnd, -1, left, top, 0, 0, 0x11);
         }
         app.status = load_error.unwrap_or_else(|| {
-            format!(
-                "已恢复 {} 个选区；点击开始可持续识别。",
-                app.settings.selections.len()
+            i18n::fill(
+                app.text.status_restored,
+                &[("n", &app.settings.selections.len().to_string())],
             )
         });
         let app = Box::new(UiContext {
@@ -1405,7 +1578,7 @@ pub fn run() -> Result<(), String> {
                 break;
             }
             if ret < 0 {
-                return Err("读取窗口消息失败".to_owned());
+                return Err(app.app.borrow().text.error_messages.to_owned());
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -1420,6 +1593,7 @@ struct SelectState {
     current: Point,
     result: Option<Rect>,
     origin: Point,
+    language: Language,
 }
 unsafe extern "system" fn select_proc(hwnd: Handle, msg: u32, w: usize, l: isize) -> isize {
     if !matches!(msg, 0x201 | 0x200 | 0x202 | 0x100 | WM_PAINT) {
@@ -1473,7 +1647,7 @@ unsafe extern "system" fn select_proc(hwnd: Handle, msg: u32, w: usize, l: isize
             FillRect(dc, &r, GetStockObject(4));
             SetTextColor(dc, 0xffffff);
             SetBkMode(dc, 1);
-            let text = wide("拖动框选一只宝可梦的名字或 No.编号，松开完成；Esc 取消。");
+            let text = wide(i18n::strings(state.language).choose_hint);
             r.top += 20;
             DrawTextW(dc, text.as_ptr(), -1, &mut r, 1 | 0x800);
             if let Some(start) = state.start {
@@ -1497,7 +1671,11 @@ unsafe extern "system" fn select_proc(hwnd: Handle, msg: u32, w: usize, l: isize
         _ => DefWindowProcW(hwnd, msg, w, l),
     }
 }
-unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
+unsafe fn choose_roi(
+    parent: Handle,
+    language: Language,
+    text: &Strings,
+) -> Result<Option<Selection>, String> {
     let desktop = desktop_bounds();
     let (width, height) = (desktop.width, desktop.height);
     ShowWindow(parent, 0);
@@ -1508,7 +1686,7 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
     let hwnd = CreateWindowExW(
         0x88 | 0x80000,
         wide("PokeMMOHintSelect").as_ptr(),
-        wide("选择名字区域").as_ptr(),
+        wide(text.choose_title).as_ptr(),
         0x80000000,
         origin.x,
         origin.y,
@@ -1521,13 +1699,14 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
     );
     if hwnd == 0 {
         ShowWindow(parent, 5);
-        return Err("无法创建框选窗口".to_owned());
+        return Err(text.error_choose_window.to_owned());
     }
     let mut state = Box::new(SelectState {
         start: None,
         current: Point::default(),
         result: None,
         origin,
+        language,
     });
     SetWindowLongPtrW(hwnd, USER_DATA, &mut *state as *mut SelectState as isize);
     SetLayeredWindowAttributes(hwnd, 0, 150, 2);
@@ -1555,7 +1734,7 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
             width: r.right - r.left,
             height: r.bottom - r.top,
         }
-        .validate(width, height)?;
+        .validate_for(width, height, language)?;
         let selection = Selection {
             roi,
             width,
@@ -1563,7 +1742,7 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
             origin_x: origin.x,
             origin_y: origin.y,
         };
-        selection.screen_bounds(desktop)?;
+        selection.screen_bounds_for(desktop, language)?;
         return Ok(Some(selection));
     }
     Ok(None)
@@ -1572,16 +1751,16 @@ unsafe fn choose_roi(parent: Handle) -> Result<Option<Selection>, String> {
 fn settings_directory() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("PokeMMOHint"))
 }
-fn save_settings(settings: &RegionSettings) -> Result<(), String> {
-    let directory = settings_directory().ok_or("无法取得本地配置目录")?;
+fn save_settings(settings: &RegionSettings, text: &Strings) -> Result<(), String> {
+    let directory = settings_directory().ok_or_else(|| text.error_config_dir.to_owned())?;
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let path = directory.join("screen-regions.txt");
     let temporary = directory.join("screen-regions.tmp");
     std::fs::write(&temporary, settings.encode()).map_err(|e| e.to_string())?;
     std::fs::rename(temporary, path).map_err(|e| e.to_string())
 }
-fn save_history(history: &History) -> Result<(), String> {
-    let directory = settings_directory().ok_or("无法取得本地配置目录")?;
+fn save_history(history: &History, text: &Strings) -> Result<(), String> {
+    let directory = settings_directory().ok_or_else(|| text.error_config_dir.to_owned())?;
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let path = directory.join("recognition-history.txt");
     let temporary = directory.join("recognition-history.tmp");
@@ -1594,11 +1773,12 @@ fn load_history() -> History {
         .map(|text| History::parse(&text))
         .unwrap_or_default()
 }
-fn load_settings() -> (RegionSettings, Option<String>) {
+fn load_settings(language: Language) -> (RegionSettings, Option<String>) {
+    let text = i18n::strings(language);
     let Some(directory) = settings_directory() else {
         return (
             RegionSettings::default(),
-            Some("无法取得本地配置目录".to_owned()),
+            Some(text.error_config_dir.to_owned()),
         );
     };
     let path = directory.join("screen-regions.txt");
@@ -1618,28 +1798,31 @@ fn load_settings() -> (RegionSettings, Option<String>) {
                         window,
                         ..RegionSettings::default()
                     },
-                    Some("已切换为屏幕选区，请重新框选一次；旧配置文件保留。".to_owned()),
+                    Some(text.error_legacy_config.to_owned()),
                 );
             }
         }
     }
     match std::fs::read_to_string(path) {
-        Ok(text) => match RegionSettings::parse(&text) {
+        Ok(contents) => match RegionSettings::parse_for(&contents, language) {
             Ok(settings) => (settings, None),
             Err(e) => (
                 RegionSettings::default(),
-                Some(format!("选区读取失败：{e}")),
+                Some(i18n::fill(text.error_regions_load, &[("error", &e)])),
             ),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (RegionSettings::default(), None),
         Err(e) => (
             RegionSettings::default(),
-            Some(format!("选区读取失败：{e}")),
+            Some(i18n::fill(
+                text.error_regions_load,
+                &[("error", &e.to_string())],
+            )),
         ),
     }
 }
 
-unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
+unsafe fn capture(r: Rect, text: &Strings) -> Result<Vec<u8>, String> {
     let width = r.right - r.left;
     let height = r.bottom - r.top;
     let vx = GetSystemMetrics(76);
@@ -1649,16 +1832,16 @@ unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
         || r.right > vx + GetSystemMetrics(78)
         || r.bottom > vy + GetSystemMetrics(79)
     {
-        return Err("识别区域超出屏幕，请重新框选".to_owned());
+        return Err(text.error_capture_bounds.to_owned());
     }
     let source = GetDC(0);
     if source == 0 {
-        return Err("无法取得屏幕画面".to_owned());
+        return Err(text.error_screen_dc.to_owned());
     }
     let dest = CreateCompatibleDC(source);
     if dest == 0 {
         ReleaseDC(0, source);
-        return Err("无法创建截图缓冲".to_owned());
+        return Err(text.error_capture_dc.to_owned());
     }
     let info = BitmapInfo {
         header: BitmapHeader {
@@ -1676,7 +1859,7 @@ unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
     if bitmap == 0 || pixels.is_null() {
         DeleteDC(dest);
         ReleaseDC(0, source);
-        return Err("无法分配截图缓冲".to_owned());
+        return Err(text.error_capture_buffer.to_owned());
     }
     let previous = SelectObject(dest, bitmap);
     let ok = BitBlt(
@@ -1694,7 +1877,7 @@ unsafe fn capture(r: Rect) -> Result<Vec<u8>, String> {
     let result = if ok != 0 {
         Ok(std::slice::from_raw_parts(pixels as *const u8, (width * height * 4) as usize).to_vec())
     } else {
-        Err("截取画面失败，请用窗口或无边框模式".to_owned())
+        Err(text.error_capture.to_owned())
     };
     SelectObject(dest, previous);
     DeleteObject(bitmap);
@@ -1748,6 +1931,9 @@ struct WorkerContext {
     tx: mpsc::Sender<Update>,
     confirmed: Arc<Mutex<HashMap<String, u16>>>,
     occlusions: Arc<Mutex<Vec<Rect>>>,
+    text: &'static Strings,
+    language: Language,
+    game_language: Language,
 }
 fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
     let WorkerContext {
@@ -1758,6 +1944,9 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
         tx,
         confirmed,
         occlusions,
+        text,
+        language,
+        game_language,
     } = context;
     let scratch = match Scratch::create() {
         Ok(s) => s,
@@ -1767,7 +1956,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                     index: *index,
                     deferred: false,
                     status: e.clone(),
-                    body: "尚未识别".to_owned(),
+                    body: text.body_not_recognized.to_owned(),
                     card: None,
                     suggestion: None,
                 });
@@ -1787,24 +1976,24 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
             let mut deferred = false;
             let result = (|| -> Result<pokemmo_hint::ReadDecision, String> {
                 let pixels = unsafe {
-                    let region = screen_rect(*selected)?;
+                    let region = screen_rect(*selected, language)?;
                     let mut own_rect = Rect::default();
                     if IsIconic(own) == 0
                         && GetWindowRect(own, &mut own_rect) != 0
                         && intersects(region, own_rect)
                     {
-                        return Err("提示窗口挡住了识别区域，请拖开或最小化。".to_owned());
+                        return Err(text.blocked_by_window.to_owned());
                     }
                     if occlusions
                         .lock()
-                        .map_err(|_| "浮窗位置不可用")?
+                        .map_err(|_| text.error_occlusions.to_owned())?
                         .iter()
                         .any(|r| intersects(region, *r))
                     {
                         deferred = true;
-                        return Err("浮动信息卡遮挡，暂缓读取此选区".to_owned());
+                        return Err(text.deferred.to_owned());
                     }
-                    capture(region)?
+                    capture(region, text)?
                 };
                 std::fs::write(
                     &scratch.image,
@@ -1819,11 +2008,15 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                 } else {
                     None
                 };
-                let raw =
-                    config.recognize(&scratch.image, alternate, &scratch.windows_script, &stop)?;
-                let aliases = confirmed.lock().map_err(|_| "确认记录不可用")?.clone();
+                let raw = config
+                    .recognize(&scratch.image, alternate, &scratch.windows_script, &stop)
+                    .map_err(|e| i18n::fill(text.error_ocr, &[("error", &e)]))?;
+                let aliases = confirmed
+                    .lock()
+                    .map_err(|_| text.error_confirmations.to_owned())?
+                    .clone();
                 let mut reads = raw.lines().map(str::to_owned).collect::<Vec<_>>();
-                let mut decision = resolve_reads(&reads, &data, &aliases);
+                let mut decision = resolve_reads(&reads, game_language, &data, &aliases);
                 if decision.result == MatchResult::Unknown && !stop.load(Ordering::Relaxed) {
                     std::fs::write(
                         &scratch.alternate,
@@ -1834,7 +2027,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                         config.recognize(&scratch.alternate, None, &scratch.windows_script, &stop)
                     {
                         reads.extend(raw.lines().map(str::to_owned));
-                        decision = resolve_reads(&reads, &data, &aliases);
+                        decision = resolve_reads(&reads, game_language, &data, &aliases);
                     }
                 }
                 Ok(decision)
@@ -1847,28 +2040,25 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                     let stable = tracker.update(&decision.result);
                     let card = stable
                         .and_then(|id| data.iter().find(|s| s.id == id))
-                        .map(hint_card);
+                        .map(|species| hint_card(species, language));
                     let body = if card.is_some() {
                         String::new()
                     } else if let Some(suggestion) = &decision.suggestion {
                         let name = data
                             .iter()
                             .find(|s| s.id == suggestion.id)
-                            .map(|s| s.name.as_str())
+                            .map(|s| s.name(language))
                             .unwrap_or("");
-                        format!(
-                            "识别文字：{}\r\n可能是「{}」。确认后，本次运行会记住这个读法。",
-                            suggestion.observed, name
+                        i18n::fill(
+                            text.body_candidate,
+                            &[("text", &suggestion.observed), ("name", name)],
                         )
                     } else {
                         match decision.result {
-                            MatchResult::Found(_) => "发现物种，正在等待下一次一致结果…".to_owned(),
-                            MatchResult::Unknown => {
-                                "没有匹配到名字或编号。\r\n请只框文字那一行，并在四周稍留空隙。"
-                                    .to_owned()
-                            }
-                            MatchResult::Ambiguous => "识别到多个候选，请缩小识别区域。".to_owned(),
-                            MatchResult::Conflict => "编号与名字不一致，请重新识别。".to_owned(),
+                            MatchResult::Found(_) => text.body_found_waiting.to_owned(),
+                            MatchResult::Unknown => text.body_no_match.to_owned(),
+                            MatchResult::Ambiguous => text.body_ambiguous.to_owned(),
+                            MatchResult::Conflict => text.body_conflict.to_owned(),
                         }
                     };
                     let preview: String = decision
@@ -1877,14 +2067,13 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                         .take(80)
                         .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
                         .collect();
-                    let status = format!(
-                        "识别文字：{}{}",
-                        preview,
+                    let status = i18n::fill(
                         if decision.corrected {
-                            " · 使用已确认读法"
+                            text.status_ocr_corrected
                         } else {
-                            ""
-                        }
+                            text.status_ocr
+                        },
+                        &[("text", &preview)],
                     );
                     Update {
                         index: *index,
@@ -1899,11 +2088,16 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                     if !deferred {
                         tracker.update(&MatchResult::Unknown);
                     }
+                    let status = if error.contains("WINDOWS_OCR_UNAVAILABLE") {
+                        text.error_windows_ocr.to_owned()
+                    } else {
+                        error
+                    };
                     Update {
                         index: *index,
                         deferred,
-                        status: error,
-                        body: "暂无可靠结果".to_owned(),
+                        status,
+                        body: text.body_no_reliable.to_owned(),
                         card: None,
                         suggestion: None,
                     }

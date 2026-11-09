@@ -1,6 +1,6 @@
 [package]
 name = "pokemmo-hint"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Local screenshot OCR and basic type hints for PokeMMO"
 

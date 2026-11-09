@@ -1,5 +1,6 @@
-# Optional Windows 10/11 on-device Chinese OCR. No language installation or networking.
-param([string]$ImagePath='', [string]$AlternativeImagePath='', [switch]$CheckOnly)
+# Optional Windows 10/11 on-device OCR for the selected game language.
+# No language installation or networking.
+param([string]$ImagePath='', [string]$AlternativeImagePath='', [string]$Language='zh-Hans', [switch]$CheckOnly)
 $ErrorActionPreference='Stop'
 try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -18,10 +19,16 @@ try {
         $task=$asTask.MakeGenericMethod($type).Invoke($null,@($operation))
         $task.GetAwaiter().GetResult()
     }
-    $language=[Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Where-Object { $_.LanguageTag -match '^zh-(Hans|CN|SG)' } | Select-Object -First 1
-    if (-not $language) { throw 'WINDOWS_CHINESE_OCR_UNAVAILABLE' }
+    $pattern = switch -Regex ($Language) {
+        '^zh' { '^zh-(Hans|CN|SG)' }
+        '^ja' { '^ja(-|$)' }
+        '^en' { '^en(-|$)' }
+        default { '^zh-(Hans|CN|SG)' }
+    }
+    $language=[Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Where-Object { $_.LanguageTag -match $pattern } | Select-Object -First 1
+    if (-not $language) { throw 'WINDOWS_OCR_UNAVAILABLE' }
     $engine=[Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($language)
-    if (-not $engine) { throw 'WINDOWS_CHINESE_OCR_UNAVAILABLE' }
+    if (-not $engine) { throw 'WINDOWS_OCR_UNAVAILABLE' }
     if ($CheckOnly) { [Console]::WriteLine('WINDOWS_OCR_READY'); exit 0 }
     foreach ($path in @($ImagePath,$AlternativeImagePath) | Where-Object { $_ }) {
     $file=Await-Operation ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])

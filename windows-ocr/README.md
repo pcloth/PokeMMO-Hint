@@ -1,10 +1,12 @@
-# Windows OCR 属性提示（Rust 1.1.0）
+# Windows OCR 属性提示（Rust 1.2.0）
 
 这是独立 Windows 程序，不是 `.mod` 包。直接截取用户框选的屏幕区域，无需检测 PokeMMO 进程；可用于模拟器、其他宝可梦游戏或图鉴页面，物种及相克规则需在现有数据范围内。Rust 原生窗口、截图和属性匹配不依赖第三方 Rust crate；OCR 可选 Windows 系统中文识别或 PP-OCRv6 tiny。应用运行时本地识别，不发送截图或查询到云端。
 
 0.7.0 新增引擎设置与按需下载，支持多个选区持续识别，每个成功匹配的选区上方显示独立的弱点小标签，鼠标悬停展开完整信息卡。选区和主窗口位置自动保存。用户已确认前版卡片界面改善；新版已通过核心测试和 Windows 适配层静态检查，本环境不能启动 Windows EXE，**多选区与浮动标签需要本机重新编译验证**。
 
 1.1.0 在主窗口右侧新增“识别历史”栏目：每次稳定识别后按时间倒序记录，最新的显示在最上面，最多保留 20 条；点击任一记录，左侧卡片区显示该物种的完整属性，选择选区或开始识别可返回实时视图。历史按选区合并，同一选区连续识别同一物种只记一条；只保存物种编号、选区名称和本地时间，不保存原始 OCR 文字。重启后自动恢复。
+
+1.2.0 支持中文、English、日本語三种界面与游戏识别语言，设置中分开选择：界面语言控制窗口、卡片、类型名称和识别历史；游戏语言决定 Windows OCR 的识别语言与物种名匹配。英文/日文物种名来自 PokeAPI 公开的官方译名数据，生成 649 条本地表，运行时不联网；中文数据保持原有 ROM 来源。PP-OCRv6 tiny 的字表不含假名，日文名只能使用 Windows 日文 OCR 或 No.编号，英文可继续使用两种引擎。候选确认按游戏语言分别记忆。
 
 ## 更新已有版本
 
@@ -70,7 +72,21 @@ PP-OCRv6 tiny 的官方字表包含“鼬、喵、蛹”，但仍缺少“貘、
 
 屏幕选区内名字消失、匹配冲突、截图／OCR 失败时清除旧提示。切换应用后仍会识别这些屏幕位置，不判断前台应用属于哪个游戏；需要停止时点击暂停。画面被其他窗口盖住后，只能识别当前可见内容。主窗口挡住识别区时清除该选区提示，移开或使用标题栏最小化即可。展开卡片时尽量避开所有选区；如果仍有遮挡，暂缓读取被遮挡位置，最长 15 秒未更新会清除其标签，避免将辅助窗口文字当成游戏文字。
 
-识别状态行显示原始 OCR 结果，方便排查。英文名、昵称和玩家自定义昵称暂不支持；群怪需要分别框选各自名字，不能将多个名字框在同一选区。遇到识别不到，先调整框选区域或放大游戏 UI，而不是让程序猜物种。
+识别状态行显示原始 OCR 结果，方便排查。只识别所选游戏语言的物种名；玩家昵称、队伍名和自定义改名暂不支持；群怪需要分别框选各自名字，不能将多个名字框在同一选区。遇到识别不到，先调整框选区域或放大游戏 UI，而不是让程序猜物种。
+
+## 多语言
+
+设置中的“界面语言”和“游戏语言”互相独立：
+
+- **界面语言**：简体中文、English、日本語，控制窗口文案、按钮提示、属性卡片标题与类型名称、识别历史。应用后主窗口立即切换；设置窗口本身在下次打开时使用新语言。
+- **游戏语言**：决定 Windows OCR 使用的识别语言（`zh-Hans`／`en-US`／`ja-JP`）和物种名匹配。常见组合是英文客户端配中文界面，也可以反过来。
+- 首次启动（尚无配置文件）时，界面与游戏语言都跟随 Windows；已有配置保持原语言，可在设置中单独修改。
+
+物种名和类型名称按界面语言显示；识别历史也保存为界面语言下的名称。候选确认只在同一个游戏语言内生效，切换语言后不会误用其他语言的读法。
+
+日文 OCR 依赖 Windows 已安装的日文语言功能（设置中可打开系统语言设置）。PP-OCRv6 tiny 的字表不含假名，选择日文 + PP-OCR 时会提示只能使用 No.编号；英文使用 PP-OCR 时字母可识别，但准确率仍受模型和截图质量影响。
+
+英文/日文名来自 PokeAPI 的公开官方译名 CSV（`en` 与 `ja-hrkt`），由 `scripts/import_species_names.py` 生成 `data/species_names.tsv`，只保留全国编号 1–649；生成后随程序离线使用，运行时不联网。来源、哈希和检查范围见 [多语言验证记录](../docs/evidence/multilingual-validation.json)。
 
 ## 识别历史
 
@@ -85,6 +101,7 @@ PP-OCRv6 tiny 的官方字表包含“鼬、喵、蛹”，但仍缺少“貘、
 
 - 覆盖全国编号 **1–649**，基础形态。
 - 中文名来自本机中文字符串表，基础属性来自本机《黑／白1》ROM 的 personal 数据。由 `scripts/import_ocr_species.py` 提取成事实数据 TSV，未打包 ROM、图片、对话或游戏代码。不是联网从当前 PokeMMO 客户端获取的最新属性。
+- 英文、日文名来自 PokeAPI 的 `pokemon_species_names.csv`（语言 `en`、`ja-hrkt`），由 `scripts/import_species_names.py` 生成 `data/species_names.tsv`，只保留 1–649 的基础物种名。类型名称的三语表内置在程序中，不来自游戏文本。
 - 采用第二至第五世代的 17 属性相克表，钢仍抵抗幽灵和恶，没有妖精属性。PokeMMO 社区[属性表项目说明](https://forums.pokemmo.com/index.php?/topic/201443-pc-better-default-a-cleaner-more-polished-pokemmo-theme/)也采用这一规则；若游戏后续调整，需更新本地表。
 - 计算只包含基础形态属性，不判断特性、道具、招式和对战中属性改变。洛托姆、结草贵妇等不同属性形态不能仅靠基础名称或全国编号可靠区分，本版不宣称识别实际形态。
 
@@ -92,6 +109,7 @@ PP-OCRv6 tiny 的官方字表包含“鼬、喵、蛹”，但仍缺少“貘、
 
 ```bash
 python scripts/import_ocr_species.py --rom /mnt/d/games/PokeMMO/roms/黑白.nds --strings /mnt/d/games/PokeMMO/data/strings/z_yibu_strings_zh_dump.xml
+python scripts/import_species_names.py --csv pokemon_species_names.csv --out windows-ocr/data/species_names.tsv
 ```
 
 ## 命令行诊断
@@ -100,11 +118,13 @@ python scripts/import_ocr_species.py --rom /mnt/d/games/PokeMMO/roms/黑白.nds 
 .\windows-ocr\target\release\pokemmo-hint.exe --text 'No.573 奇诺栗鼠' 2>&1 | Out-String
 .\windows-ocr\target\release\pokemmo-hint.exe --text '523' 2>&1 | Out-String
 .\windows-ocr\target\release\pokemmo-hint.exe --image 'D:\图片\敌人名字.bmp' 2>&1 | Out-String
+.\windows-ocr\target\release\pokemmo-hint.exe --lang en --text 'Pikachu' 2>&1 | Out-String
+.\windows-ocr\target\release\pokemmo-hint.exe --lang ja --game-lang ja --text 'ピカチュウ' 2>&1 | Out-String
 ```
 
-手动 `--text` 和窗口测试输入框支持裸编号。`--image` 使用设置中已应用的引擎，建议提供已经裁剪、放大的名字／编号图片；PP-OCR 图片诊断需要 32 位无压缩 BMP，Windows OCR 可读取系统支持的图片格式。实时截图模式自动生成 BMP 并预处理。GUI 程序的诊断输出建议显式重定向并等待，详见发布脚本。
+`--lang zh|en|ja` 设置输出和默认匹配语言；`--game-lang` 单独指定匹配/图片识别语言，例如中文界面查询英文名时用 `--lang zh --game-lang en --text Charizard`。手动 `--text` 和窗口测试输入框支持裸编号。`--image` 使用设置中已应用的引擎（命令行 `--game-lang` 会覆盖图片识别语言），建议提供已经裁剪、放大的名字／编号图片；PP-OCR 图片诊断需要 32 位无压缩 BMP，Windows OCR 可读取系统支持的图片格式。实时截图模式自动生成 BMP 并预处理。GUI 程序的诊断输出建议显式重定向并等待，详见发布脚本。
 
-程序直接截取屏幕选区，不枚举、打开或查询游戏进程，不点击游戏、不自动换人。只在按钮悬停提示中判断辅助程序自身是否位于前台。屏幕选区、名称与主窗口位置保存在 `%LOCALAPPDATA%\PokeMMOHint\screen-regions.txt`，识别历史保存在同目录的 `recognition-history.txt`；旧 `regions.txt`／`roi.txt` 不覆盖、不当作屏幕坐标读取。清空选区也会保存，不会在下次启动恢复旧选区。OCR 的主／备用截图保存在程序自己的系统临时目录中，暂停／正常退出时删除；异常退出可能残留临时目录。候选确认仅保存在内存，不写入物种数据或游戏文件。
+程序直接截取屏幕选区，不枚举、打开或查询游戏进程，不点击游戏、不自动换人。只在按钮悬停提示中判断辅助程序自身是否位于前台。屏幕选区、名称与主窗口位置保存在 `%LOCALAPPDATA%\PokeMMOHint\screen-regions.txt`，识别历史保存在同目录的 `recognition-history.txt`，界面/游戏语言与引擎偏好保存在 `ocr-settings.txt`；旧 `regions.txt`／`roi.txt` 不覆盖、不当作屏幕坐标读取。清空选区也会保存，不会在下次启动恢复旧选区。OCR 的主／备用截图保存在程序自己的系统临时目录中，暂停／正常退出时删除；异常退出可能残留临时目录。候选确认仅保存在内存，不写入物种数据或游戏文件。
 
 ## 验证与待测
 
@@ -116,9 +136,11 @@ cargo check --manifest-path windows-ocr/Cargo.toml --offline --features windows-
 cargo run --manifest-path windows-ocr/Cargo.toml --offline -- --text 'No.573 奇诺栗鼠'
 ```
 
-覆盖屏幕坐标保存、负坐标显示器、布局变化拒绝、旧窗口坐标格式拒绝，以及双属性相乘、四倍弱点、免疫、钢的旧世代规则、编号／名字冲突、等级数字排除、切换敌人清除旧结果、框选边界、灰度／极性处理、候选确认和不同读法冲突，以及多选区配置保存／迁移／清空、独立连续更新、标签与卡片位置，以及识别历史的上限、倒序、按选区合并、格式往返和损坏数据忽略。Windows 类型检查不等于新版 Windows 编译或运行已通过。
+覆盖屏幕坐标保存、负坐标显示器、布局变化拒绝、旧窗口坐标格式拒绝，以及双属性相乘、四倍弱点、免疫、钢的旧世代规则、编号／名字冲突、等级数字排除、切换敌人清除旧结果、框选边界、灰度／极性处理、候选确认和不同读法冲突，以及多选区配置保存／迁移／清空、独立连续更新、标签与卡片位置、识别历史的上限、倒序、按选区合并、格式往返和损坏数据忽略，以及中/英/日三语名称完整性、英文和日文名匹配、语言隔离的候选确认、三语类型名与提示文本、语言设置往返。Windows 类型检查不等于新版 Windows 编译或运行已通过。
 
 识别历史验证：1.1.0 新增 6 项历史单元测试，共 35 项核心测试通过；Windows 适配层 Clippy 通过。本机 Windows 实际启动 EXE，用临时用户配置目录预置历史文件，确认列表倒序显示、空状态提示和点击记录查看详情；未连接 OCR 引擎，真实识别写入仍需用游戏画面验证。
+
+多语言验证：1.2.0 共 41 项核心测试通过，Windows 适配层 Clippy 通过；新增英文/日文译名唯一性与 649 条完整性检查、英文名（含 Mr. Mime、Farfetch'd、Ho-Oh、Porygon-Z、Nidoran♀/♂）和日文假名匹配、语言隔离的候选确认、三语类型名与提示、语言设置读写往返。本机 Windows 构建通过；三语界面布局、实际英文/日文 OCR 和 Windows 语言包安装流程需用户本机运行确认，完整来源与限制见 [多语言验证记录](../docs/evidence/multilingual-validation.json)。
 
 用户截图回归：用 Linux Tesseract C API 和现有中文模型，比较同一个紧凑的名字裁剪 `(140,84)-(215,106)`，旧预处理得到“君主性”，新的 Rust 灰度预处理得到“君主蛇”。另两个裁剪中也读出正确名字（可能带额外符号），完整记录见 [OCR 回归证据](../docs/evidence/ocr-serperior-regression.json)。这是单张截图的样例验证，不代表总体准确率，也不是 Windows 新版界面的实测。
 

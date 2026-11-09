@@ -9,6 +9,7 @@ struct State {
     height: i32,
     drag: Option<(Point, Roi, u8)>,
     accepted: bool,
+    language: Language,
 }
 fn hit(roi: Roi, p: Point) -> Option<u8> {
     let margin = 6;
@@ -68,9 +69,10 @@ pub(super) unsafe extern "system" fn window_proc(
             SelectObject(dc, oldb);
             SetBkMode(dc, 1);
             SetTextColor(dc, 0xffffff);
-            let text = wide(&format!(
-                "{}：拖动框内移动，拖动边缘或角调整大小；Enter 保存，Esc 取消",
-                state.name
+            let user_text = i18n::strings(state.language);
+            let text = wide(&i18n::fill(
+                user_text.editor_hint,
+                &[("name", &state.name)],
             ));
             area.top += 20;
             DrawTextW(dc, text.as_ptr(), -1, &mut area, 1 | 0x800);
@@ -174,8 +176,10 @@ pub(super) unsafe fn edit(
     selected: Selection,
     name: String,
     others: Vec<Roi>,
+    language: Language,
 ) -> Result<Option<Selection>, String> {
-    selected.screen_bounds(desktop_bounds())?;
+    let text = i18n::strings(language);
+    selected.screen_bounds_for(desktop_bounds(), language)?;
     let origin = Point {
         x: selected.origin_x,
         y: selected.origin_y,
@@ -184,7 +188,7 @@ pub(super) unsafe fn edit(
     let hwnd = CreateWindowExW(
         0x80088,
         wide("PokeMMOHintEditRegion").as_ptr(),
-        wide("调整选区").as_ptr(),
+        wide(text.editor_title).as_ptr(),
         0x80000000,
         origin.x,
         origin.y,
@@ -197,7 +201,7 @@ pub(super) unsafe fn edit(
     );
     if hwnd == 0 {
         ShowWindow(parent, 5);
-        return Err("无法打开选区编辑器".to_owned());
+        return Err(text.editor_open_failed.to_owned());
     }
     let state = Box::new(RefCell::new(State {
         roi: selected.roi,
@@ -207,6 +211,7 @@ pub(super) unsafe fn edit(
         height: selected.height,
         drag: None,
         accepted: false,
+        language,
     }));
     SetWindowLongPtrW(hwnd, USER_DATA, (&*state as *const RefCell<State>) as isize);
     SetLayeredWindowAttributes(hwnd, 0, 170, 2);
@@ -229,7 +234,9 @@ pub(super) unsafe fn edit(
     ShowWindow(parent, 5);
     let state = state.borrow();
     if state.accepted {
-        state.roi.validate(selected.width, selected.height)?;
+        state
+            .roi
+            .validate_for(selected.width, selected.height, state.language)?;
         Ok(Some(Selection {
             roi: state.roi,
             ..selected

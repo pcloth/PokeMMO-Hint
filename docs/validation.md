@@ -4,6 +4,12 @@
 
 ## 当前 Windows OCR 工具
 
+### 1.2.0：中文、英文、日文界面与识别
+
+设置中新增“界面语言”和“游戏语言”，均可选简体中文／English／日本語。界面语言控制窗口、按钮提示、卡片、类型名称和识别历史；游戏语言决定 Windows OCR 的语言标签（`zh-Hans`／`en-US`／`ja-JP`）及物种名匹配，两者独立。首次启动（无配置文件）时两者都跟随 Windows；已有配置保持原语言。候选确认按游戏语言分别记忆。英文/日文名由 PokeAPI 的 `pokemon_species_names.csv`（`en`、`ja-hrkt`）生成 649 条 `data/species_names.tsv`，运行时离线；CSV 与生成文件的 SHA-256、来源日期记录在 [多语言验证](evidence/multilingual-validation.json)。
+
+Windows OCR 脚本按游戏语言选择系统识别器；PP-OCRv6 tiny 字表不含假名，日文名必须使用 Windows 日文 OCR 或 No.编号，选择日文 + PP-OCR 时设置和主窗口提示该限制。共 41 项核心测试通过，新增三语名称完整性/唯一性、英文与日文名匹配（含 Mr. Mime、Farfetch'd、Ho-Oh、Porygon-Z、Nidoran♀/♂）、候选确认语言隔离、三语类型名/提示和语言设置往返；Windows 适配层 Clippy 通过，本机 Windows 编译通过。三语界面布局、实际英文/日文 OCR 及 Windows 日文语言包安装流程未在本环境完成，需用户本机验证。
+
 ### 1.1.0：识别历史栏目
 
 主窗口右侧新增“识别历史”：稳定识别结果按时间倒序记录，最多 20 条，最新显示在最上面；点击记录在左侧卡片区查看完整属性，选择选区或再次开始识别可返回实时视图。历史按选区合并，同一选区连续识别同一物种不重复新增；只保存编号、选区名称和本地时间，不保存原始 OCR 文字。数据保存在 `%LOCALAPPDATA%\PokeMMOHint\recognition-history.txt`，缺失或损坏时忽略，不影响识别。
