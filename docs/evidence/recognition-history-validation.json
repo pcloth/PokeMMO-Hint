@@ -1,0 +1,15 @@
+{
+  "version": "1.1.0",
+  "feature": "recognition history column",
+  "limit": 20,
+  "order": "newest first",
+  "coalescing": "same species per region",
+  "stored_fields": ["species id", "region name", "local clock"],
+  "excluded": "raw OCR text and player names",
+  "storage": "%LOCALAPPDATA%\\PokeMMOHint\\recognition-history.txt",
+  "core_tests": 35,
+  "history_tests": 6,
+  "clippy": "passed",
+  "windows_gui": "launched locally at 125% scaling with a temporary profile: seeded list, empty state and click-to-details captured",
+  "not_verified": "recording from live OCR output and rotation past 20 entries during real play"
+}

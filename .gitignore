@@ -45,6 +45,8 @@ screen-regions.tmp
 roi.txt
 ocr-settings.txt
 ocr-settings.tmp
+recognition-history.txt
+recognition-history.tmp
 
 # Editor/OS/session files
 /.idea/
@@ -59,5 +61,6 @@ Desktop.ini
 /.agents/
 /.codex/
 /.aws/
+/.dsh-acl-recovery/
 
 # Keep Cargo.lock, generated PNG/ICO assets, licenses, scripts and evidence tracked.

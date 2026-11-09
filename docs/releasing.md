@@ -1,6 +1,6 @@
 # Windows 发版
 
-0.7.0 使用轻量基础 ZIP：EXE、用户说明与许可材料。**不包含 Tesseract、模型权重或 ONNX Runtime DLL**。Windows 中文 OCR 为默认；PP-OCRv6 tiny 在应用设置中选择后自动下载。首次准备完成后可离线识别，截图不上传。
+1.1.0 使用轻量基础 ZIP：EXE、用户说明与许可材料。**不包含 Tesseract、模型权重或 ONNX Runtime DLL**。Windows 中文 OCR 为默认；PP-OCRv6 tiny 在应用设置中选择后自动下载。首次准备完成后可离线识别，截图不上传。
 
 ## 构建与打包
 
@@ -15,7 +15,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_window
 版本在 `windows-ocr/Cargo.toml` 修改后，用 `cargo generate-lockfile --manifest-path .\windows-ocr\Cargo.toml --offline` 同步锁文件。脚本只生成本地包，不上传或修改 Git。
 
 ```text
-PokeMMO-Hint-v0.7.0-windows-x64/
+PokeMMO-Hint-v1.1.0-windows-x64/
   pokemmo-hint.exe
   README.txt
   Quick-Start-zh-CN.png

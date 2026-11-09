@@ -2,6 +2,7 @@ pub mod commandline;
 use std::fmt;
 pub mod bitmap;
 pub mod engines;
+pub mod history;
 pub mod model;
 pub mod regions;
 

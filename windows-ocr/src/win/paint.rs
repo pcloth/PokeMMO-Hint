@@ -1,4 +1,5 @@
 use super::*;
+use pokemmo_hint::history::MAX_HISTORY;
 use pokemmo_hint::{TypeEffect, TYPE_NAMES};
 
 pub(super) fn px(value: i32, dpi: u32) -> i32 {
@@ -16,8 +17,9 @@ const WHITE: u32 = rgb(255, 255, 255);
 
 pub(super) struct Theme {
     pub body: Handle,
-    small: Handle,
+    pub small: Handle,
     title: Handle,
+    heading: Handle,
     white: Handle,
     buttons: Vec<Handle>,
 }
@@ -45,6 +47,7 @@ impl Theme {
             body: font(15, 400),
             small: font(12, 400),
             title: font(23, 600),
+            heading: font(15, 600),
             white: CreateSolidBrush(WHITE),
             buttons: (10..=22)
                 .map(|id| {
@@ -67,7 +70,7 @@ impl Theme {
 impl Drop for Theme {
     fn drop(&mut self) {
         unsafe {
-            for obj in [self.body, self.small, self.title, self.white] {
+            for obj in [self.body, self.small, self.title, self.heading, self.white] {
                 if obj != 0 {
                     DeleteObject(obj);
                 }
@@ -273,6 +276,55 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         rect(dpi, 314, 104, 284, 23),
         0x20 | 0x8000,
     );
+    // History column: header and empty hint. The list itself is a native
+    // listbox child placed inside this card.
+    rounded(
+        dc,
+        rect(
+            dpi,
+            HISTORY_LEFT,
+            HISTORY_TOP,
+            HISTORY_WIDTH,
+            HISTORY_HEIGHT + app.card_height - 258,
+        ),
+        WHITE,
+        BORDER,
+        px(18, dpi),
+    );
+    text(
+        dc,
+        app.theme.heading,
+        INK,
+        "识别历史",
+        rect(dpi, HISTORY_LEFT + 12, HISTORY_TOP + 10, 140, 24),
+        0x20,
+    );
+    text(
+        dc,
+        app.theme.small,
+        MUTED,
+        &format!("{} / {}", app.history.len(), MAX_HISTORY),
+        rect(dpi, HISTORY_LEFT + HISTORY_WIDTH - 56, HISTORY_TOP + 13, 44, 20),
+        2 | 0x20,
+    );
+    if app.history.is_empty() {
+        text(
+            dc,
+            app.theme.body,
+            MUTED,
+            "暂无识别记录",
+            rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 190, HISTORY_WIDTH - 16, 26),
+            1 | 0x20,
+        );
+        text(
+            dc,
+            app.theme.small,
+            MUTED,
+            "识别成功后自动记录，最多 20 条，最新的在最上面；点击列表查看详情。",
+            rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 220, HISTORY_WIDTH - 16, 72),
+            1 | 0x10,
+        );
+    }
     if let Some(card) = &app.card {
         draw_card(
             dc,

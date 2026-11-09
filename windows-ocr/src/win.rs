@@ -5,6 +5,7 @@ compile_error!("This prototype requires 64-bit Windows Rust.");
 use crate::ocr::Backend;
 use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap, white_text_bitmap};
 use pokemmo_hint::engines::{self, EngineSettings};
+use pokemmo_hint::history::History;
 use pokemmo_hint::{
     hint_card, lookup_query, resolve_reads, species_data, HintCard, MatchResult, NameSuggestion,
     Roi, Tracker,
@@ -190,7 +191,7 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(name: *const u16) -> Handle;
-
+    fn GetLocalTime(time: *mut SystemTimeFields);
 }
 #[link(name = "gdi32")]
 extern "system" {
@@ -272,6 +273,28 @@ const WM_PAINT: u32 = 15;
 const WM_COMMAND: u32 = 0x111;
 const WM_TIMER: u32 = 0x113;
 const USER_DATA: i32 = -21;
+// Right-hand recognition history column, in logical pixels.
+const HISTORY_LIST_ID: isize = 112;
+const HISTORY_LEFT: i32 = 620;
+const HISTORY_TOP: i32 = 58;
+const HISTORY_WIDTH: i32 = 240;
+const HISTORY_HEIGHT: i32 = 408;
+const HISTORY_LIST_LEFT: i32 = 628;
+const HISTORY_LIST_TOP: i32 = 96;
+const HISTORY_LIST_WIDTH: i32 = 224;
+const HISTORY_LIST_HEIGHT: i32 = 358;
+#[repr(C)]
+#[derive(Default)]
+struct SystemTimeFields {
+    year: u16,
+    month: u16,
+    day_of_week: u16,
+    day: u16,
+    hour: u16,
+    minute: u16,
+    second: u16,
+    milliseconds: u16,
+}
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
@@ -282,6 +305,16 @@ unsafe fn get_text(hwnd: Handle) -> String {
     let mut b = [0u16; 512];
     let n = GetWindowTextW(hwnd, b.as_mut_ptr(), 512);
     String::from_utf16_lossy(&b[..n.max(0) as usize])
+}
+fn local_clock() -> String {
+    let mut time = SystemTimeFields::default();
+    unsafe {
+        GetLocalTime(&mut time);
+    }
+    format!(
+        "{:02}-{:02} {:02}:{:02}",
+        time.month, time.day, time.hour, time.minute
+    )
 }
 
 unsafe fn desktop_bounds() -> Bounds {
@@ -338,6 +371,8 @@ struct App {
     settings: RegionSettings,
     engine_settings: EngineSettings,
     selector: Handle,
+    history: History,
+    history_list: Handle,
     slots: Vec<SlotState>,
     details: Option<overlay::Window>,
     hovered: Option<usize>,
@@ -429,7 +464,7 @@ impl App {
             let mut bounds = Rect {
                 left: 0,
                 top: 0,
-                right: paint::px(620, self.dpi),
+                right: paint::px(880, self.dpi),
                 bottom: paint::px(480 + offset, self.dpi),
             };
             AdjustWindowRectExForDpi(&mut bounds, 0x02ca0000, 0, 0x8, self.dpi);
@@ -441,6 +476,15 @@ impl App {
                 bounds.right - bounds.left,
                 bounds.bottom - bounds.top,
                 0x16,
+            );
+            SetWindowPos(
+                self.history_list,
+                0,
+                paint::px(HISTORY_LIST_LEFT, self.dpi),
+                paint::px(HISTORY_LIST_TOP, self.dpi),
+                paint::px(HISTORY_LIST_WIDTH, self.dpi),
+                paint::px(HISTORY_LIST_HEIGHT + offset, self.dpi),
+                0x14,
             );
         }
     }
@@ -491,6 +535,52 @@ impl App {
             ));
             self.content("开始识别后，每个选区会独立显示弱点标签。", None, None);
         }
+    }
+    fn refresh_history(&mut self) {
+        unsafe {
+            SendMessageW(self.history_list, 0x184, 0, 0); // LB_RESETCONTENT
+            let data = species_data();
+            for entry in self.history.entries() {
+                let name = data
+                    .iter()
+                    .find(|species| species.id == entry.id)
+                    .map(|species| species.name.as_str())
+                    .unwrap_or("未知");
+                let label = format!("{}  #{:03} {}", entry.clock, entry.id, name);
+                SendMessageW(
+                    self.history_list,
+                    0x180, // LB_ADDSTRING
+                    0,
+                    wide(&label).as_ptr() as isize,
+                );
+            }
+            if !self.history.is_empty() {
+                SendMessageW(self.history_list, 0x186, usize::MAX, 0); // LB_SETCURSEL
+            }
+            ShowWindow(self.history_list, if self.history.is_empty() { 0 } else { 5 });
+            InvalidateRect(self.hwnd, null(), 0);
+        }
+    }
+    fn clear_history_selection(&mut self) {
+        unsafe {
+            SendMessageW(self.history_list, 0x186, usize::MAX, 0); // LB_SETCURSEL
+        }
+    }
+    fn view_history(&mut self, index: usize) {
+        let Some(entry) = self.history.get(index).cloned() else {
+            return;
+        };
+        let data = species_data();
+        let Some(species) = data.iter().find(|species| species.id == entry.id) else {
+            return;
+        };
+        // Keep the stored card on screen instead of the next polling result.
+        self.manual_preview = true;
+        self.content("", Some(hint_card(species)), None);
+        self.status(&format!(
+            "历史记录 · #{:03} {} · {}",
+            entry.id, species.name, entry.region
+        ));
     }
     fn start(&mut self) -> Result<(), String> {
         self.halt();
@@ -665,7 +755,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
     } // custom-painted background
     if !matches!(
         msg,
-        WM_COMMAND | WM_TIMER | WM_DESTROY | WM_PAINT | 0x2b | 0x133 | 0x232 | 0x5
+        WM_COMMAND | WM_TIMER | WM_DESTROY | WM_PAINT | 0x2b | 0x133 | 0x134 | 0x232 | 0x5
     ) {
         return DefWindowProcW(hwnd, msg, w, l);
     }
@@ -682,7 +772,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
         paint::button(&*(l as *const paint::DrawItem), &(*p).theme, (*p).dpi);
         return 1;
     }
-    if msg == 0x133 {
+    if msg == 0x133 || msg == 0x134 {
         SetBkColor(w as Handle, 0xffffff);
         SetTextColor(w as Handle, 0x3b291e);
         return (*p).theme.white_brush();
@@ -713,8 +803,16 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 if selected >= 0 {
                     app.settings.selected = selected as usize;
                     app.manual_preview = false;
+                    app.clear_history_selection();
                     let _ = app.persist();
                     app.preview();
+                }
+                return 0;
+            }
+            if id == HISTORY_LIST_ID as usize && notification == 1 {
+                let selected = SendMessageW(app.history_list, 0x0188, 0, 0); // LB_GETCURSEL
+                if selected >= 0 {
+                    app.view_history(selected as usize);
                 }
                 return 0;
             }
@@ -778,6 +876,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         app.status("已暂停，浮动标签已隐藏。");
                         app.content("可继续添加选区，或使用下方查询。", None, None);
                     } else {
+                        app.clear_history_selection();
                         match app.start() {
                             Ok(()) => {
                                 ShowWindow(hwnd, 6);
@@ -886,6 +985,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 }
                 104 => {
                     app.manual_preview = true;
+                    app.clear_history_selection();
                     let data = species_data();
                     match lookup_query(&get_text(app.edit), &data) {
                         MatchResult::Found(id) => {
@@ -918,16 +1018,28 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 }
             }
             let mut refresh = false;
+            let mut history_changed = false;
             for update in updates {
                 if update.deferred {
                     continue;
                 }
                 let index = update.index;
+                let card_id = update.card.as_ref().map(|card| card.id);
                 if let Some(slot) = app.slots.get_mut(index) {
                     slot.last = Some(update);
                     slot.updated = Instant::now();
                     refresh |= index == app.settings.selected;
                 }
+                if let Some(id) = card_id {
+                    let region = app.settings.name(index);
+                    if app.history.record(id, &region, &local_clock()) {
+                        history_changed = true;
+                    }
+                }
+            }
+            if history_changed {
+                app.refresh_history();
+                let _ = save_history(&app.history);
             }
             if refresh {
                 app.preview();
@@ -1041,7 +1153,7 @@ pub fn run() -> Result<(), String> {
             0x02CA0000,
             100,
             100,
-            620,
+            880,
             310,
             0,
             0,
@@ -1068,7 +1180,7 @@ pub fn run() -> Result<(), String> {
         let mut bounds = Rect {
             left: 0,
             top: 0,
-            right: paint::px(620, dpi),
+            right: paint::px(880, dpi),
             bottom: paint::px(480, dpi),
         };
         AdjustWindowRectExForDpi(&mut bounds, 0x02ca0000, 0, 0x8, dpi);
@@ -1097,6 +1209,8 @@ pub fn run() -> Result<(), String> {
             settings,
             engine_settings: engines::load_settings().unwrap_or_default(),
             selector: 0,
+            history: load_history(),
+            history_list: 0,
             slots: Vec::new(),
             details: None,
             hovered: None,
@@ -1224,6 +1338,18 @@ pub fn run() -> Result<(), String> {
             px(30),
         );
         let mut tooltips = tooltips::Tooltips::new(hwnd, app.theme.clone(), dpi);
+        app.history_list = control(
+            hwnd,
+            "LISTBOX",
+            "",
+            0x00210141, // WS_VSCROLL | WS_TABSTOP | LBS_NOINTEGRALHEIGHT | LBS_HASSTRINGS | LBS_NOTIFY
+            HISTORY_LIST_ID,
+            px(HISTORY_LIST_LEFT),
+            px(HISTORY_LIST_TOP),
+            px(HISTORY_LIST_WIDTH),
+            px(HISTORY_LIST_HEIGHT),
+        );
+        SendMessageW(app.history_list, 0x30, app.theme.small as usize, 1);
         control(
             hwnd,
             "BUTTON",
@@ -1239,6 +1365,7 @@ pub fn run() -> Result<(), String> {
             tooltips.add(GetDlgItem(hwnd, id));
         }
         app.rebuild_selector();
+        app.refresh_history();
         if let Some((x, y)) = app.settings.window {
             let screen = overlay::screen_for(Bounds {
                 x,
@@ -1452,6 +1579,20 @@ fn save_settings(settings: &RegionSettings) -> Result<(), String> {
     let temporary = directory.join("screen-regions.tmp");
     std::fs::write(&temporary, settings.encode()).map_err(|e| e.to_string())?;
     std::fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+fn save_history(history: &History) -> Result<(), String> {
+    let directory = settings_directory().ok_or("无法取得本地配置目录")?;
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let path = directory.join("recognition-history.txt");
+    let temporary = directory.join("recognition-history.tmp");
+    std::fs::write(&temporary, history.encode()).map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+fn load_history() -> History {
+    settings_directory()
+        .and_then(|directory| std::fs::read_to_string(directory.join("recognition-history.txt")).ok())
+        .map(|text| History::parse(&text))
+        .unwrap_or_default()
 }
 fn load_settings() -> (RegionSettings, Option<String>) {
     let Some(directory) = settings_directory() else {
