@@ -311,16 +311,56 @@ pub fn drag_roi(roi: Roi, dx: i32, dy: i32, edges: u8, width: i32, height: i32) 
     }
 }
 
+fn no_weakness(lang: Language) -> &'static str {
+    match lang {
+        Language::Zh => "无弱点",
+        Language::En => "No weakness",
+        Language::Ja => "弱点なし",
+    }
+}
+fn multiplier_label(value: f64) -> &'static str {
+    match value {
+        4.0 => "4",
+        2.0 => "2",
+        0.5 => "½",
+        0.25 => "¼",
+        _ => "",
+    }
+}
 pub fn first_weakness(card: &HintCard, lang: Language) -> String {
     match card.weaknesses.first() {
-        Some(e) => format!("{}×{}", type_name(lang, e.type_id), e.multiplier),
-        None => match lang {
-            Language::Zh => "无弱点",
-            Language::En => "No weakness",
-            Language::Ja => "弱点なし",
-        }
-        .to_owned(),
+        Some(e) => format!(
+            "{}×{}",
+            type_name(lang, e.type_id),
+            multiplier_label(e.multiplier)
+        ),
+        None => no_weakness(lang).to_owned(),
     }
+}
+/// Compact floating-tag label. With `all`, every weakness from the card's
+/// weakness group is merged into one tag instead of only the strongest one.
+pub fn weakness_label(card: &HintCard, lang: Language, all: bool) -> String {
+    if !all {
+        return first_weakness(card, lang);
+    }
+    if card.weaknesses.is_empty() {
+        return no_weakness(lang).to_owned();
+    }
+    let separator = match lang {
+        Language::En => ", ",
+        Language::Zh | Language::Ja => "、",
+    };
+    card.weaknesses
+        .iter()
+        .map(|e| {
+            format!(
+                "{}×{}",
+                type_name(lang, e.type_id),
+                multiplier_label(e.multiplier)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -755,10 +795,19 @@ mod tests {
         );
         assert_eq!(first_weakness(&card, Language::Zh), "岩石×4");
         assert_eq!(first_weakness(&card, Language::En), "Rock×4");
+        assert_eq!(
+            weakness_label(&card, Language::Zh, true),
+            "岩石×4、水×2、电×2"
+        );
+        assert_eq!(
+            weakness_label(&card, Language::En, true),
+            "Rock×4, Water×2, Electric×2"
+        );
         let mut empty = card;
         empty.weaknesses.clear();
         assert_eq!(first_weakness(&empty, Language::Zh), "无弱点");
         assert_eq!(first_weakness(&empty, Language::Ja), "弱点なし");
+        assert_eq!(weakness_label(&empty, Language::Ja, true), "弱点なし");
     }
     #[test]
     fn default_region_names_follow_the_ui_language() {

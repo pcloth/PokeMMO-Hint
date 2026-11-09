@@ -775,6 +775,7 @@ impl App {
                             &card,
                             false,
                             self.language,
+                            self.engine_settings.show_all_weaknesses,
                         )
                         .ok();
                     }
@@ -824,6 +825,7 @@ impl App {
                         card,
                         true,
                         self.language,
+                        self.engine_settings.show_all_weaknesses,
                     )
                     .ok();
                 }

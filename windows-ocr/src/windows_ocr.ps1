@@ -25,9 +25,12 @@ try {
         '^en' { '^en(-|$)' }
         default { '^zh-(Hans|CN|SG)' }
     }
-    $language=[Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Where-Object { $_.LanguageTag -match $pattern } | Select-Object -First 1
-    if (-not $language) { throw 'WINDOWS_OCR_UNAVAILABLE' }
-    $engine=[Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($language)
+    $recognizer=[Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Where-Object { $_.LanguageTag -match $pattern } | Select-Object -First 1
+    if (-not $recognizer) { throw 'WINDOWS_OCR_UNAVAILABLE' }
+    # Do not reuse $Language here: it is the [string] parameter and PowerShell
+    # variable names are case-insensitive, so a Language object would be coerced
+    # back to a string. Build a Language from the selected tag instead.
+    $engine=[Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new($recognizer.LanguageTag))
     if (-not $engine) { throw 'WINDOWS_OCR_UNAVAILABLE' }
     if ($CheckOnly) { [Console]::WriteLine('WINDOWS_OCR_READY'); exit 0 }
     foreach ($path in @($ImagePath,$AlternativeImagePath) | Where-Object { $_ }) {

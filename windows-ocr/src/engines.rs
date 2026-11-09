@@ -34,6 +34,7 @@ pub struct EngineSettings {
     pub refresh_interval_ms: u64,
     pub ui_language: Language,
     pub game_language: Language,
+    pub show_all_weaknesses: bool,
 }
 impl Default for EngineSettings {
     fn default() -> Self {
@@ -43,6 +44,7 @@ impl Default for EngineSettings {
             refresh_interval_ms: 1000,
             ui_language: Language::Zh,
             game_language: Language::Zh,
+            show_all_weaknesses: false,
         }
     }
 }
@@ -71,6 +73,8 @@ impl EngineSettings {
                 ("game_language", text) => {
                     value.game_language = Language::parse(text).ok_or("不支持的游戏语言")?
                 }
+                ("show_all_weaknesses", "1") => value.show_all_weaknesses = true,
+                ("show_all_weaknesses", "0") => value.show_all_weaknesses = false,
                 ("refresh_interval_ms", text) => {
                     let ms = text.parse::<u64>().map_err(|_| "识别刷新率格式错误")?;
                     if !REFRESH_INTERVALS_MS.contains(&ms) {
@@ -85,7 +89,7 @@ impl EngineSettings {
     }
     pub fn encode(self) -> String {
         format!(
-            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\nui_language={}\ngame_language={}\n",
+            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\nui_language={}\ngame_language={}\nshow_all_weaknesses={}\n",
             if self.engine == Engine::Windows {
                 "windows"
             } else {
@@ -99,6 +103,7 @@ impl EngineSettings {
             self.refresh_interval_ms,
             self.ui_language.code(),
             self.game_language.code(),
+            u8::from(self.show_all_weaknesses),
         )
     }
     pub fn model_urls(self) -> [String; 2] {
@@ -245,10 +250,12 @@ mod tests {
             refresh_interval_ms: 500,
             ui_language: Language::En,
             game_language: Language::Ja,
+            show_all_weaknesses: true,
         };
         assert_eq!(EngineSettings::parse(&a.encode()).unwrap(), a);
         assert!(a.model_urls()[0].starts_with("https://hf-mirror.com/"));
         assert_eq!(EngineSettings::default().engine, Engine::Windows);
+        assert!(!EngineSettings::default().show_all_weaknesses);
         assert!(EngineSettings::parse("bad").is_err());
         assert!(!a.supports_game_language(Language::Ja));
         assert!(a.supports_game_language(Language::En));

@@ -8,7 +8,7 @@
 
 设置中新增“界面语言”和“游戏语言”，均可选简体中文／English／日本語。界面语言控制窗口、按钮提示、卡片、类型名称和识别历史；游戏语言决定 Windows OCR 的语言标签（`zh-Hans`／`en-US`／`ja-JP`）及物种名匹配，两者独立。首次启动（无配置文件）时两者都跟随 Windows；已有配置保持原语言。候选确认按游戏语言分别记忆。英文/日文名由 PokeAPI 的 `pokemon_species_names.csv`（`en`、`ja-hrkt`）生成 649 条 `data/species_names.tsv`，运行时离线；CSV 与生成文件的 SHA-256、来源日期记录在 [多语言验证](evidence/multilingual-validation.json)。
 
-Windows OCR 脚本按游戏语言选择系统识别器；PP-OCRv6 tiny 字表不含假名，日文名必须使用 Windows 日文 OCR 或 No.编号，选择日文 + PP-OCR 时设置和主窗口提示该限制。共 41 项核心测试通过，新增三语名称完整性/唯一性、英文与日文名匹配（含 Mr. Mime、Farfetch'd、Ho-Oh、Porygon-Z、Nidoran♀/♂）、候选确认语言隔离、三语类型名/提示和语言设置往返；Windows 适配层 Clippy 通过，本机 Windows 编译通过。三语界面布局、实际英文/日文 OCR 及 Windows 日文语言包安装流程未在本环境完成，需用户本机验证。
+Windows OCR 脚本按游戏语言选择系统识别器；PP-OCRv6 tiny 字表不含假名，日文名必须使用 Windows 日文 OCR 或 No.编号，选择日文 + PP-OCR 时设置和主窗口提示该限制。设置新增“显示全部弱点”，打开后浮动标签把卡片第一行的全部弱点合并显示（默认只显示第一个）。同时修复设置窗口按窗口尺寸而非客户区创建导致底部按钮被截断，以及 Windows OCR 检查脚本中 `$Language` 参数与局部变量同名、被 `[string]` 约束强制转换导致 `LanguageTag` 为空的问题。共 41 项核心测试通过，新增三语名称完整性/唯一性、英文与日文名匹配（含 Mr. Mime、Farfetch'd、Ho-Oh、Porygon-Z、Nidoran♀/♂）、候选确认语言隔离、三语类型名/提示、语言设置往返和合并弱点标签；Windows 适配层 Clippy 通过，本机 Windows 编译通过，设置窗口中文/英文布局和 Windows 中文/英文 OCR 检查实测通过；日文 OCR 因未安装日文语言包仍显示安装提示，需用户本机确认。
 
 ### 1.1.0：识别历史栏目
 

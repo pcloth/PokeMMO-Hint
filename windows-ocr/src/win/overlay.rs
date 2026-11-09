@@ -52,6 +52,7 @@ struct Context {
     dpi: u32,
     full: bool,
     lang: Language,
+    all_weaknesses: bool,
     content: RefCell<Content>,
 }
 pub(super) struct Window {
@@ -65,15 +66,17 @@ impl Window {
         card: &HintCard,
         full: bool,
         lang: Language,
+        all_weaknesses: bool,
     ) -> Result<Self, String> {
         let context = Box::new(Context {
             theme,
             dpi,
             full,
             lang,
+            all_weaknesses,
             content: RefCell::new(Content {
                 card: card.clone(),
-                label: pokemmo_hint::regions::first_weakness(card, lang),
+                label: pokemmo_hint::regions::weakness_label(card, lang, all_weaknesses),
                 tail: None,
             }),
         });
@@ -103,7 +106,8 @@ impl Window {
         let mut content = self.context.content.borrow_mut();
         if content.card.id != card.id {
             content.card = card.clone();
-            content.label = pokemmo_hint::regions::first_weakness(card, self.context.lang);
+            content.label =
+                pokemmo_hint::regions::weakness_label(card, self.context.lang, self.context.all_weaknesses);
             InvalidateRect(self.hwnd, null(), 0);
         }
     }

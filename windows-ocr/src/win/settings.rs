@@ -60,10 +60,11 @@ fn prepare(
     stop: &AtomicBool,
     tx: &mpsc::Sender<Result<String, String>>,
 ) -> Result<String, String> {
-    let scratch = Scratch::create()?;
+    let failed = |error: &str| i18n::fill(text.settings_failed, &[("error", error)]);
+    let scratch = Scratch::create().map_err(|error| failed(&error))?;
     let language = value.game_language.native_name();
     if value.engine == Engine::Windows {
-        let mut cmd = powershell(&scratch.windows_script)?;
+        let mut cmd = powershell(&scratch.windows_script).map_err(|error| failed(&error))?;
         cmd.arg("-CheckOnly")
             .arg("-Language")
             .arg(value.game_language.windows_tag());
@@ -71,7 +72,7 @@ fn prepare(
             if error.contains("WINDOWS_OCR_UNAVAILABLE") {
                 i18n::fill(text.settings_windows_missing, &[("lang", language)])
             } else {
-                i18n::fill(text.settings_failed, &[("error", &error)])
+                failed(&error)
             }
         })?;
         if !output.contains("WINDOWS_OCR_READY") {
@@ -82,16 +83,17 @@ fn prepare(
             &[("lang", language)],
         ));
     }
-    let cache = engines::assets_dir()?;
-    std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    let cache = engines::assets_dir().map_err(|error| failed(&error))?;
+    std::fs::create_dir_all(&cache).map_err(|error| failed(&error.to_string()))?;
     let using_cache = engines::cached_assets_ready(&cache);
     if using_cache {
         let _ = tx.send(Ok("PROGRESS:CACHE loading saved files".to_owned()));
     } else {
         let script = scratch.directory.join("prepare.ps1");
         let progress = scratch.directory.join("progress.txt");
-        std::fs::write(&script, include_str!("../prepare_ocr.ps1")).map_err(|e| e.to_string())?;
-        let mut cmd = powershell(&script)?;
+        std::fs::write(&script, include_str!("../prepare_ocr.ps1"))
+            .map_err(|error| failed(&error.to_string()))?;
+        let mut cmd = powershell(&script).map_err(|error| failed(&error))?;
         cmd.arg("-CacheDir")
             .arg(&cache)
             .arg("-Source")
@@ -117,14 +119,18 @@ fn prepare(
             });
             let result = OcrProcess::capture_timeout(cmd, stop, Duration::from_secs(600));
             done.store(true, Ordering::Relaxed);
-            result.map(|_| ())
+            result
+                .map(|_| ())
+                .map_err(|error| failed(&error))
         })?;
     }
     if stop.load(Ordering::Relaxed) {
         return Err(text.settings_cancelled.to_owned());
     }
     let _ = tx.send(Ok("PROGRESS:CHECK loading model".to_owned()));
-    let mut cmd = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    let mut cmd = std::process::Command::new(
+        std::env::current_exe().map_err(|error| failed(&error.to_string()))?,
+    );
     cmd.arg("--paddle-check").arg(&cache);
     let output =
         OcrProcess::capture_timeout(cmd, stop, Duration::from_secs(60)).map_err(|error| {
@@ -134,13 +140,14 @@ fn prepare(
                 let _ = std::fs::remove_file(cache.join("ready.txt"));
                 i18n::fill(text.settings_cache_failed, &[("error", &error)])
             } else {
-                error
+                failed(&error)
             }
         })?;
     if !output.contains("PADDLE_READY") {
         return Err(text.settings_check_failed.to_owned());
     }
-    std::fs::write(cache.join("ready.txt"), engines::MODEL_SHA256).map_err(|e| e.to_string())?;
+    std::fs::write(cache.join("ready.txt"), engines::MODEL_SHA256)
+        .map_err(|error| failed(&error.to_string()))?;
     let mut ready = if using_cache {
         text.settings_paddle_ready_cache.to_owned()
     } else {
@@ -190,7 +197,7 @@ pub(super) unsafe extern "system" fn window_proc(
         paint::button(&*(l as *const paint::DrawItem), &ctx.theme, ctx.dpi);
         return 1;
     }
-    if msg == 0x133 || msg == 0x138 {
+    if msg == 0x133 || msg == 0x138 || msg == 0x135 {
         SetBkColor(w as Handle, 0xffffff);
         SetTextColor(w as Handle, 0x3b291e);
         return ctx.theme.white_brush();
@@ -224,7 +231,7 @@ pub(super) unsafe extern "system" fn window_proc(
             ctx.theme.small,
             0x3b291e,
             t.settings_help,
-            paint::rect(d, 20, 258, 500, 96),
+            paint::rect(d, 20, 280, 500, 70),
             0x10,
         );
         if let Ok(state) = ctx.state.try_borrow() {
@@ -233,8 +240,8 @@ pub(super) unsafe extern "system" fn window_proc(
                 ctx.theme.small,
                 if state.ready { 0x698405 } else { 0x8b6540 },
                 &state.status,
-                paint::rect(d, 20, 360, 500, 60),
-                0x10,
+                paint::rect(d, 20, 356, 500, 54),
+                0x10 | 0x8000,
             );
         }
         EndPaint(hwnd, &ps);
@@ -286,6 +293,11 @@ pub(super) unsafe extern "system" fn window_proc(
                     state.value.refresh_interval_ms = *ms;
                 }
                 return 0; // Changing refresh rate does not reload or download the engine.
+            }
+            if id == 215 && notification == 0 {
+                state.value.show_all_weaknesses =
+                    SendMessageW(GetDlgItem(hwnd, 215), 0x00f0, 0, 0) == 1;
+                return 0;
             }
             if (id == 210 || id == 211) && notification == 1 {
                 state.value.engine = if SendMessageW(GetDlgItem(hwnd, 210), 0x147, 0, 0) == 1 {
@@ -374,7 +386,7 @@ pub(super) unsafe extern "system" fn window_proc(
                     }
                     Err(e) => {
                         state.ready = false;
-                        state.status = i18n::fill(ctx.text.settings_failed, &[("error", &e)]);
+                        state.status = e;
                     }
                 }
                 InvalidateRect(hwnd, null(), 0);
@@ -397,6 +409,13 @@ pub(super) unsafe fn edit(
     language: Language,
 ) -> Result<Option<EngineSettings>, String> {
     let text = i18n::strings(language);
+    let mut frame = Rect {
+        left: 0,
+        top: 0,
+        right: paint::px(550, dpi),
+        bottom: paint::px(470, dpi),
+    };
+    AdjustWindowRectExForDpi(&mut frame, 0x00c80000, 0, 0, dpi);
     let hwnd = CreateWindowExW(
         0,
         wide("PokeMMOHintSettings").as_ptr(),
@@ -404,8 +423,8 @@ pub(super) unsafe fn edit(
         0x00c80000,
         200,
         160,
-        paint::px(550, dpi),
-        paint::px(482, dpi),
+        frame.right - frame.left,
+        frame.bottom - frame.top,
         parent,
         0,
         GetModuleHandleW(null()),
@@ -428,7 +447,7 @@ pub(super) unsafe fn edit(
             0,
             id,
             paint::px(x, dpi),
-            paint::px(430, dpi),
+            paint::px(418, dpi),
             paint::px(40, dpi),
             paint::px(36, dpi),
         );
@@ -506,6 +525,24 @@ pub(super) unsafe fn edit(
         GetDlgItem(hwnd, 211),
         i32::from(value.engine == Engine::PaddleTiny),
     );
+    let checkbox = CreateWindowExW(
+        0,
+        wide("BUTTON").as_ptr(),
+        wide(text.settings_show_all_weaknesses).as_ptr(),
+        0x50000000 | 0x00000003 | 0x00010000, // WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP
+        paint::px(20, dpi),
+        paint::px(248, dpi),
+        paint::px(498, dpi),
+        paint::px(26, dpi),
+        hwnd,
+        215,
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if checkbox != 0 {
+        SendMessageW(checkbox, 0x30, theme.body as usize, 1);
+        SendMessageW(checkbox, 0x00f1, usize::from(value.show_all_weaknesses), 0);
+    }
     let context = Box::new(Context {
         state: RefCell::new(State {
             value,
