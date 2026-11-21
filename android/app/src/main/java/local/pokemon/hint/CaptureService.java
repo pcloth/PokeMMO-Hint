@@ -22,7 +22,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import java.util.*;
 
 public final class CaptureService extends Service {
-    static final String[] GROUPS = {"弱点", "普通伤害", "抗性", "免疫"};
     static boolean active;
     private static final String STOP = "local.pokemon.hint.STOP";
     private static final String CHANNEL = "screen_capture";
@@ -40,13 +39,18 @@ public final class CaptureService extends Service {
     private List<Regions.Area> areas = new ArrayList<>();
     private Dex.Species[] last = new Dex.Species[0];
     private Dex.Species[] stable = new Dex.Species[0];
+    private static final long MISSED_TEXT_GRACE_MS = 2500;
     private long[] observed = new long[0];
+    private long[] missingSince = new long[0];
     private int width, height, density, rotation, generation;
     private long nextRound;
     private boolean paused, busy, closed;
     private FloatingControls controls;
     private View editor, popup;
     private final Runnable refreshTags = this::renderTags;
+    private final SharedPreferences.OnSharedPreferenceChangeListener tagSettings = (settings, key) -> {
+        if (MainActivity.SHOW_ALL_WEAKNESSES.equals(key)) renderTags();
+    };
     private Rect popupBounds;
     private String regionKey;
     private int selectedDetail = -1;
@@ -80,6 +84,7 @@ public final class CaptureService extends Service {
                 }
             }, handler);
             updateDisplay(0, 0);
+            prefs.registerOnSharedPreferenceChangeListener(tagSettings);
             active = true;
         } catch (Exception error) {
             android.util.Log.e("PokemonHint", "Unable to start capture", error);
@@ -137,6 +142,7 @@ public final class CaptureService extends Service {
         last = new Dex.Species[areas.size()];
         stable = new Dex.Species[areas.size()];
         observed = new long[areas.size()];
+        missingSince = new long[areas.size()];
         ImageReader next = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
         ImageReader old = reader;
         reader = next;
@@ -217,39 +223,75 @@ public final class CaptureService extends Service {
             busy = false;
             return;
         }
-        Bitmap bitmap = crops.get(at);
+        Bitmap original = crops.get(at);
+        readText(original, (match, retry) -> {
+            Bitmap filtered = null;
+            if (retry && !closed && token == generation) {
+                filtered = OcrImage.whiteText(original);
+            }
+            original.recycle();
+            if (filtered == null) {
+                finishRead(crops, indices, at, token, match);
+                return;
+            }
+            Bitmap fallback = filtered;
+            readText(fallback, (secondMatch, ignored) -> {
+                fallback.recycle();
+                finishRead(crops, indices, at, token, secondMatch);
+            });
+        });
+    }
+
+    private void readText(Bitmap bitmap, java.util.function.BiConsumer<Dex.Species, Boolean> result) {
         try {
             recognizer.process(InputImage.fromBitmap(bitmap, 0)).addOnCompleteListener(task -> {
-                bitmap.recycle();
-                if (!closed && token == generation) {
-                    int index = indices.get(at);
-                    observed[index] = SystemClock.uptimeMillis();
-                    Dex.Species match = task.isSuccessful() ? dex.lookup(task.getResult().getText(), false) : null;
-                    if (!task.isSuccessful()) {
-                        android.util.Log.w("PokemonHint", "OCR failed", task.getException());
-                        if (!reportedOcrError) toast("识别失败，请检查游戏文字语言或重启识别");
-                        reportedOcrError = true;
-                    } else reportedOcrError = false;
-                    Dex.Species confirmed = match != null && match == last[index] ? match : null;
-                    last[index] = match;
-                    if (confirmed != stable[index]) {
-                        stable[index] = confirmed;
-                        if (confirmed != null) History.record(prefs, confirmed.id());
-                        if (selectedDetail == index) closeDetails();
-                        renderTags();
-                    }
+                if (closed) {
+                    result.accept(null, false);
+                } else if (task.isSuccessful()) {
+                    reportedOcrError = false;
+                    Dex.Species match = dex.lookup(task.getResult().getText(), false);
+                    result.accept(match, match == null);
+                } else {
+                    reportOcrError(task.getException());
+                    result.accept(null, false);
                 }
-                recognize(crops, indices, at + 1, token);
             });
         } catch (RuntimeException error) {
-            android.util.Log.e("PokemonHint", "OCR could not start", error);
-            for (int i = at; i < crops.size(); i++) crops.get(i).recycle();
-            busy = false;
-            paused = true;
-            invalidateResults();
-            toast("识别引擎启动失败，已暂停");
-            if (controls != null) controls.setPaused(true);
+            reportOcrError(error);
+            result.accept(null, false);
         }
+    }
+
+    private void reportOcrError(Exception error) {
+        android.util.Log.w("PokemonHint", "OCR failed", error);
+        if (!reportedOcrError) toast("识别失败，请检查游戏文字语言或重启识别");
+        reportedOcrError = true;
+    }
+
+    private void finishRead(List<Bitmap> crops, List<Integer> indices, int at, int token, Dex.Species match) {
+        if (!closed && token == generation) {
+            int index = indices.get(at);
+            long now = SystemClock.uptimeMillis();
+            observed[index] = now;
+            Dex.Species previous = stable[index];
+            Dex.Species confirmed;
+            if (match == null) {
+                if (missingSince[index] == 0) missingSince[index] = now;
+                confirmed = now - missingSince[index] < MISSED_TEXT_GRACE_MS ? previous : null;
+            } else {
+                missingSince[index] = 0;
+                confirmed = match == previous || match == last[index] ? match : null;
+            }
+            last[index] = match;
+            if (confirmed != previous) {
+                stable[index] = confirmed;
+                if (confirmed != null) History.record(prefs, confirmed.id());
+                if (selectedDetail == index) closeDetails();
+                renderTags();
+            }
+        }
+        // Post so a synchronous recognizer failure cannot recurse through the batch.
+        handler.post(() -> recognize(crops, indices, at + 1, token));
     }
 
     private void expireResults(long now) {
@@ -270,6 +312,7 @@ public final class CaptureService extends Service {
         generation++;
         Arrays.fill(last, null);
         Arrays.fill(stable, null);
+        Arrays.fill(missingSince, 0);
         clearTags();
         closeDetails();
         nextRound = 0;
@@ -288,6 +331,7 @@ public final class CaptureService extends Service {
     @Override public void onDestroy() {
         closed = true;
         active = false;
+        if (prefs != null) prefs.unregisterOnSharedPreferenceChangeListener(tagSettings);
         invalidateResults();
         handler.removeCallbacks(refreshTags);
         remove(editor); remove(controls);
@@ -358,10 +402,16 @@ public final class CaptureService extends Service {
                     paused = !paused;
                     invalidateResults();
                     controls.setPaused(paused);
-                }, this::stopSelf);
+                }, this::openMainWindow, this::stopSelf);
         controls.setPaused(paused);
         var position = controls.position();
         attach(controls, params(position.width(), position.height(), position.x(), position.y()));
+    }
+
+    private void openMainWindow() {
+        closeDetails();
+        startActivity(new Intent(this, MainActivity.class).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
     }
 
     private void repositionControls() {
@@ -404,6 +454,7 @@ public final class CaptureService extends Service {
         last = new Dex.Species[areas.size()];
         stable = new Dex.Species[areas.size()];
         observed = new long[areas.size()];
+        missingSince = new long[areas.size()];
     }
 
     private void showRegions() {
@@ -440,21 +491,29 @@ public final class CaptureService extends Service {
     private void renderTags() {
         if (closed || editor != null) return;
         clearTags();
+        boolean showAll = prefs.getBoolean(MainActivity.SHOW_ALL_WEAKNESSES, false);
+        int tip = dp(8);
         for (int i = 0; i < stable.length; i++) {
             if (stable[i] == null) continue;
             int index = i;
             Rect region = areas.get(i).rect();
             TextView label = new TextView(this);
-            label.setText(dex.label(stable[i]));
+            label.setText(dex.label(stable[i], showAll));
             label.setTextColor(0xff9e2830);
             label.setTextSize(14);
             label.setGravity(Gravity.CENTER);
             label.setPadding(dp(11), 0, dp(11), 0);
             label.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-            int w = Math.max(dp(65), label.getMeasuredWidth()), h = dp(38);
+            int w = Math.min(width - dp(8), Math.max(dp(65), label.getMeasuredWidth() + tip));
+            if (w <= tip) continue;
+            // Reserve space for a side-facing tip as well as a top/bottom tip.
+            label.measure(View.MeasureSpec.makeMeasureSpec(w - tip, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.UNSPECIFIED);
+            int h = Math.max(dp(38), label.getMeasuredHeight() + dp(8) + tip);
+            if (h > height) continue;
             Rect location = place(region, w, h, true);
             if (location == null) continue;
-            Bubble bubble = new Bubble(this, location, region, 0xffffeef0, 0xfff1bcc2, dp(8));
+            Bubble bubble = new Bubble(this, location, region, 0xffffeef0, 0xfff1bcc2, tip);
             bubble.addView(label, new FrameLayout.LayoutParams(-1, -1));
             label.setOnClickListener(v -> showDetails(index));
             tags.add(bubble);
@@ -489,36 +548,14 @@ public final class CaptureService extends Service {
         Dex.Species entry = stable[index];
         if (entry == null) return;
         Rect region = areas.get(index).rect();
-        LinearLayout rows = new LinearLayout(this);
-        rows.setOrientation(LinearLayout.VERTICAL);
-        rows.setPadding(dp(14), dp(8), dp(14), dp(8));
-        TextView title = new TextView(this);
-        title.setText(dex.title(entry, language));
-        title.setTextColor(0xff172a44);
-        title.setTextSize(19);
-        title.setTypeface(null, Typeface.BOLD);
-        rows.addView(title);
-        String[] details = dex.details(entry);
-        int[] colors = {0xffa52b35, 0xff4c5767, 0xff146449, 0xff693ca1};
-        for (int i = 0; i < GROUPS.length; i++) {
-            TextView line = new TextView(this);
-            line.setText(GROUPS[i] + "  " + details[i]);
-            line.setTextSize(14);
-            line.setTextColor(colors[i]);
-            line.setPadding(0, dp(7), 0, dp(3));
-            rows.addView(line);
-        }
-        Button close = new Button(this);
-        close.setText("关闭详情");
-        close.setOnClickListener(v -> closeDetails());
-        rows.addView(close);
+        View rows = HintUi.card(this, dex, entry, language, this::closeDetails);
         int w = Math.min(width - dp(12), dp(345));
         rows.measure(View.MeasureSpec.makeMeasureSpec(w - dp(8), View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
         int h = Math.min(height - dp(62), rows.getMeasuredHeight() + dp(16));
         Rect location = null;
         while (h >= dp(95) && (location = place(region, w, h, false)) == null) h -= dp(24);
         if (location == null) { toast("选区旁没有足够空间展示详情"); return; }
-        Bubble bubble = new Bubble(this, location, region, 0xfffbfdff, 0xffa3bbd5, dp(8));
+        Bubble bubble = new Bubble(this, location, region, HintUi.WHITE, HintUi.BORDER, dp(8));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(rows);
         bubble.addView(scroll, new FrameLayout.LayoutParams(-1, -1));

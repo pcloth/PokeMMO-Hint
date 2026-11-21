@@ -101,14 +101,20 @@ final class Dex {
         return factor;
     }
 
-    String label(Species entry) {
+    String label(Species entry, boolean all) {
+        StringJoiner weaknesses = new StringJoiner("、").setEmptyValue("无弱点");
         for (int factor : new int[]{16, 8}) {
             for (int attack = 0; attack < TYPES.length; attack++) {
-                if (multiplier(attack, entry) == factor) return TYPES[attack] + suffix(factor);
+                if (multiplier(attack, entry) != factor) continue;
+                String value = TYPES[attack] + suffix(factor);
+                if (!all) return value;
+                weaknesses.add(value);
             }
         }
-        return "无弱点";
+        return weaknesses.toString();
     }
+
+    static String typeName(int type) { return TYPES[type]; }
 
     String title(Species entry, Language lang) {
         List<String> types = new ArrayList<>();

@@ -32,6 +32,8 @@ cargo run --release --manifest-path .\windows-ocr\Cargo.toml --offline
 
 ## 发版
 
+Android 安装包的构建、签名与安装命令见 [Android 打包发行版](android/README.md#打包发行版)。
+
 在装好 Windows Rust 和 MSVC 构建工具的电脑上，退出旧程序并运行：
 
 ```powershell

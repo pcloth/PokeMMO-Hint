@@ -22,6 +22,57 @@ cd android
 adb install .\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-Linux/macOS 使用 `bash ./gradlew :app:assembleDebug`。调试 APK 路径为 `app/build/outputs/apk/debug/app-debug.apk`。正式分发需要使用自己的签名密钥构建。
+Linux/macOS 使用 `bash ./gradlew :app:assembleDebug`。调试 APK 路径为 `app/build/outputs/apk/debug/app-debug.apk`。
+
+## 打包发行版
+
+在仓库根目录打开 PowerShell。构建前在 `android/app/build.gradle` 更新 `versionName`，并将 `versionCode` 提高到已发布版本之上。以下命令使用 JDK 17 和 Android SDK Build-Tools 35.0.0。若 SDK 装在其他位置，请修改 `$sdk`。
+
+首次发布时创建签名密钥。已有本应用的发行密钥时，跳过生成命令，并在后续命令中填写原密钥路径和别名。后续版本覆盖安装需要使用相同的应用 ID 和签名密钥。请备份密钥库和密码，并存放在仓库外。
+
+```powershell
+$key = Join-Path $env:USERPROFILE 'pokemon-hint-release.p12'
+$alias = 'pokemon-hint'
+keytool -genkeypair -storetype PKCS12 -keystore $key -alias $alias -keyalg RSA -keysize 2048 -validity 10000
+```
+
+打包、对齐、签名并验证。签名时按提示输入密码。
+
+```powershell
+$key = Join-Path $env:USERPROFILE 'pokemon-hint-release.p12'
+$alias = 'pokemon-hint'
+$sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
+$tools = Join-Path $sdk 'build-tools\35.0.0'
+
+cd android
+.\gradlew.bat :app:assembleRelease
+if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
+
+$unsigned = '.\app\build\outputs\apk\release\app-release-unsigned.apk'
+$aligned = '.\app\build\outputs\apk\release\app-release-aligned.apk'
+$release = '..\dist\pokemon-hint-android-release.apk'
+New-Item -ItemType Directory -Force '..\dist' | Out-Null
+
+& (Join-Path $tools 'zipalign.exe') -P 16 -f 4 $unsigned $aligned
+if ($LASTEXITCODE -ne 0) { throw 'APK alignment failed' }
+& (Join-Path $tools 'apksigner.bat') sign --ks $key --ks-key-alias $alias --out $release $aligned
+if ($LASTEXITCODE -ne 0) { throw 'APK signing failed' }
+& (Join-Path $tools 'apksigner.bat') verify --verbose --print-certs $release
+if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
+
+adb install -r $release
+```
+
+**安装和分发都使用 `dist/pokemon-hint-android-release.apk`。** `app-release-unsigned.apk` 和 `app-release-aligned.apk` 是未签名的中间文件，安装时会报 `INSTALL_PARSE_FAILED_NO_CERTIFICATES`。
+
+若当前目录是 `android/app/build/outputs/apk/release`，可直接运行以下命令安装已签名的包。
+
+```powershell
+adb install -r ..\..\..\..\..\..\dist\pokemon-hint-android-release.apk
+```
+
+若手机已安装调试包，或装的是用另一把密钥签名的版本，Android 会拒绝覆盖安装。卸载旧包会清除本地选区、设置和历史。
+
+[Android APK 签名工具](https://developer.android.com/tools/apksigner) · [APK 对齐工具](https://developer.android.com/tools/zipalign)
 
 [Android MediaProjection](https://developer.android.com/media/grow/media-projection) · [ML Kit 文字识别](https://developers.google.com/ml-kit/vision/text-recognition/v2/android)

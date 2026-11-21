@@ -5,15 +5,15 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
-import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.widget.LinearLayout;
-import android.widget.TextView;
+import android.widget.ImageButton;
 
 final class FloatingControls extends LinearLayout {
     private static final long IDLE_DELAY_MS = 4000;
+    private static final int TOOL_COUNT = 5;
     private enum Dock { NONE, LEFT, RIGHT, TOP, BOTTOM }
 
     private final Rect area;
@@ -25,7 +25,7 @@ final class FloatingControls extends LinearLayout {
         update();
     };
     private final Logo logo;
-    private final TextView[] buttons;
+    private final ImageButton[] buttons;
     private final int diameter;
     private final int buttonWidth;
     private final int touchSlop;
@@ -38,13 +38,13 @@ final class FloatingControls extends LinearLayout {
     record WindowPosition(int x, int y, int width, int height) {}
 
     FloatingControls(Context context, Rect area, Handler handler, Runnable reposition,
-                     Runnable add, Runnable manage, Runnable pause, Runnable stop) {
+                     Runnable add, Runnable manage, Runnable pause, Runnable home, Runnable stop) {
         super(context);
         this.area = new Rect(area);
         this.handler = handler;
         this.reposition = reposition;
         diameter = Math.min(dp(52), Math.max(2, Math.min(area.width(), area.height())));
-        buttonWidth = Math.max(1, Math.min(dp(44), (area.width() - diameter) / 4));
+        buttonWidth = Math.max(1, Math.min(dp(44), (area.width() - diameter) / TOOL_COUNT));
         touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         centerX = area.right - diameter / 2 - dp(12);
         centerY = area.top + diameter / 2 + dp(24);
@@ -61,33 +61,32 @@ final class FloatingControls extends LinearLayout {
         });
         logo.setOnTouchListener((view, event) -> onLogoTouch(event));
         addView(logo);
-        buttons = new TextView[]{
-                button("＋", "添加选区", add),
-                button("☰", "管理选区", manage),
-                button("Ⅱ", "暂停识别", pause),
-                button("×", "结束识别", stop)
+        buttons = new ImageButton[]{
+                button(R.drawable.tool_add, "添加选区", add),
+                button(R.drawable.tool_adjust, "管理选区", manage),
+                button(R.drawable.tool_pause, "暂停识别", pause),
+                button(R.drawable.tool_home, "打开主界面", home),
+                button(R.drawable.tool_cancel, "结束识别", stop)
         };
         update();
     }
 
-    private TextView button(String text, String description, Runnable action) {
-        TextView button = new TextView(getContext());
-        button.setText(text);
-        button.setGravity(Gravity.CENTER);
-        button.setTextSize(21);
-        button.setTextColor(0xffffffff);
-        button.setContentDescription(description);
-        button.setOnClickListener(view -> {
+    private ImageButton button(int icon, String description, Runnable action) {
+        ImageButton button = HintUi.icon(getContext(), icon, description, false, () -> {
             collapse();
             action.run();
         });
-        addView(button, new LayoutParams(buttonWidth, diameter));
+        var params = new LayoutParams(buttonWidth, Math.max(1, diameter - dp(8)));
+        params.gravity = android.view.Gravity.CENTER_VERTICAL;
+        addView(button, params);
         return button;
     }
 
     void setPaused(boolean paused) {
-        buttons[2].setText(paused ? "▶" : "Ⅱ");
-        buttons[2].setContentDescription(paused ? "继续识别" : "暂停识别");
+        buttons[2].setImageResource(paused ? R.drawable.tool_play : R.drawable.tool_pause);
+        String title = paused ? "继续识别" : "暂停识别";
+        buttons[2].setContentDescription(title);
+        buttons[2].setTooltipText(title);
     }
 
     WindowPosition position() { return position; }
@@ -204,8 +203,8 @@ final class FloatingControls extends LinearLayout {
             layout.height = logoHeight;
             logo.setLayoutParams(layout);
         }
-        for (TextView button : buttons) button.setVisibility(expanded ? VISIBLE : GONE);
-        if (expanded && getBackground() == null) setBackground(Bubble.panel(0xfa183253, dp(16)));
+        for (ImageButton button : buttons) button.setVisibility(expanded ? VISIBLE : GONE);
+        if (expanded && getBackground() == null) setBackground(HintUi.panel(getContext(), HintUi.PAGE, 12));
         else if (!expanded && getBackground() != null) setBackground(null);
         logo.setContentDescription(expanded ? "收起识别工具" : "展开识别工具，可拖动");
         logo.edge = visibleDock;
@@ -222,7 +221,8 @@ final class FloatingControls extends LinearLayout {
         for (int i = 0; i < getChildCount(); i++) {
             View child = getChildAt(i);
             int width = child.getMeasuredWidth();
-            child.layout(x - width, 0, x, child.getMeasuredHeight());
+            int y = (bottom - top - child.getMeasuredHeight()) / 2;
+            child.layout(x - width, y, x, y + child.getMeasuredHeight());
             x -= width;
         }
     }
