@@ -1,0 +1,41 @@
+plugins { id 'com.android.application' version '8.7.3' }
+android {
+    namespace 'local.pokemon.hint'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'local.pokemon.hint'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/dexAssets')
+}
+def windows = rootProject.file('../windows-ocr')
+def dexAssets = tasks.register('dexAssets', Sync) {
+    from(new File(windows, 'data')) { include 'species.tsv', 'species_names.tsv' }
+    into layout.buildDirectory.dir('generated/dexAssets')
+    def rules = new File(windows, 'src/lib.rs')
+    inputs.file rules
+    doLast {
+        def source = rules.getText('UTF-8')
+        def chart = ['STRONG', 'RESIST', 'IMMUNE'].collect { name ->
+            def block = (source =~ /(?s)const ${name}:.*?= \[(.*?)\n    \];/)
+            if (!block.find()) throw new GradleException("Missing type chart: ${name}")
+            def rows = (block.group(1) =~ /&\[([^\]]*)\]/).collect { it[1].replace(' ', '') }
+            if (rows.size() != 17) throw new GradleException("Invalid type chart: ${name}")
+            rows.join('\n')
+        }.join('\n')
+        new File(destinationDir, 'type_chart.txt').setText(chart + '\n', 'UTF-8')
+    }
+}
+tasks.named('preBuild').configure { dependsOn dexAssets }
+dependencies {
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
+}

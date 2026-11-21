@@ -64,3 +64,13 @@ Desktop.ini
 /.dsh-acl-recovery/
 
 # Keep Cargo.lock, generated PNG/ICO assets, licenses, scripts and evidence tracked.
+
+# Android local configuration and packages
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore

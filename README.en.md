@@ -1,5 +1,7 @@
 [简体中文](README.md) | **English** | [日本語](README.ja.md)
 
+[Android source and build guide](android/README.md)
+
 # PokeMMO Type Hint
 
 A standalone Windows OCR helper. Select screen regions directly and locally recognize Chinese, English, or Japanese species names and `No.573` / `#573`, show the first weakness above each region, and expand the full type card on hover. The main window keeps the latest 20 recognition entries, newest first; click one to view that species. Interface and game OCR languages are configured separately (简体中文, English, 日本語). Regions can be named, dragged/resized, and are saved automatically; the recognition refresh rate is configurable, and the window minimizes after a successful start. Built with Rust, using the Windows system OCR and optionally PP-OCRv6 tiny, without modifying the game. It does not search for or inspect the PokeMMO process, so it also works with emulators, other Pokémon games, or Pokédex pages; recognition depends on the bundled data.
