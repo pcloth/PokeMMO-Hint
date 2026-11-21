@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
         TextView heading = label("宝可梦属性提示", 30);
         heading.setTypeface(null, Typeface.BOLD);
         content.addView(heading);
-        content.addView(label("授权完整屏幕录制后返回游戏。点悬浮栏的 ＋ 框选敌人名字或 No. 编号，再点弱点气泡查看详情。", 16));
+        content.addView(label("授权完整屏幕录制后返回游戏。点悬浮球，再点 ＋ 框选敌人名字或 No. 编号，再点弱点气泡查看详情。", 16));
         content.addView(label("游戏文字语言", 15));
         Spinner languages = spinner(new String[]{"简体中文", "English", "日本語"}, prefs.getInt("language", 0),
                 value -> prefs.edit().putInt("language", value).apply());

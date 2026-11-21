@@ -44,11 +44,12 @@ public final class CaptureService extends Service {
     private int width, height, density, rotation, generation;
     private long nextRound;
     private boolean paused, busy, closed;
-    private View toolbar, editor, popup;
+    private FloatingControls controls;
+    private View editor, popup;
+    private final Runnable refreshTags = this::renderTags;
     private Rect popupBounds;
     private String regionKey;
     private int selectedDetail = -1;
-    private boolean toolbarAtBottom;
     private boolean reportedOcrError;
 
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -151,7 +152,7 @@ public final class CaptureService extends Service {
             if (old != null) old.close();
         }
         next.setOnImageAvailableListener(this::onFrame, handler);
-        showToolbar();
+        showControls();
     }
 
     private void onFrame(ImageReader source) {
@@ -182,7 +183,11 @@ public final class CaptureService extends Service {
     }
 
     private boolean intersectsToolbar(Rect region) {
-        return toolbar != null && Rect.intersects(region, viewBounds(toolbar));
+        if (controls == null || controls.getVisibility() != View.VISIBLE) return false;
+        var position = controls.position();
+        Rect destination = new Rect(position.x(), position.y(),
+                position.x() + position.width(), position.y() + position.height());
+        return Rect.intersects(region, destination) || Rect.intersects(region, viewBounds(controls));
     }
 
     private Bitmap crop(Image image, Rect rect) {
@@ -243,7 +248,7 @@ public final class CaptureService extends Service {
             paused = true;
             invalidateResults();
             toast("识别引擎启动失败，已暂停");
-            showToolbar();
+            if (controls != null) controls.setPaused(true);
         }
     }
 
@@ -284,7 +289,9 @@ public final class CaptureService extends Service {
         closed = true;
         active = false;
         invalidateResults();
-        remove(editor); remove(toolbar);
+        handler.removeCallbacks(refreshTags);
+        remove(editor); remove(controls);
+        controls = null;
         if (display != null) display.release();
         if (reader != null) reader.close();
         if (projection != null) projection.stop();
@@ -333,48 +340,52 @@ public final class CaptureService extends Service {
         return new Rect(xy[0], xy[1], xy[0] + view.getWidth(), xy[1] + view.getHeight());
     }
 
-    private void showToolbar() {
-        remove(toolbar);
-        LinearLayout row = new LinearLayout(this);
-        row.setBackground(Bubble.panel(0xff183253, dp(12)));
-        row.addView(control("＋", "添加选区", () -> editRegion(-1)));
-        row.addView(control("☰", "管理选区", this::showRegions));
-        row.addView(control(paused ? "▶" : "Ⅱ", paused ? "继续识别" : "暂停识别", () -> {
-            paused = !paused; invalidateResults(); showToolbar();
-        }));
-        row.addView(control("↕", "移动悬浮栏", () -> {
-            toolbarAtBottom = !toolbarAtBottom;
-            closeDetails();
-            showToolbar();
-            handler.post(this::renderTags);
-        }));
-        row.addView(control("×", "结束识别", this::stopSelf));
-        toolbar = row;
-        int size = dp(42);
-        int y = toolbarAtBottom ? Math.max(0, height - size - dp(42)) : dp(44);
-        attach(row, params(size * 5, size, Math.max(0, width - size * 5 - dp(8)), y));
+    private void showControls() {
+        remove(controls);
+        controls = null;
+        Rect area = new Rect(0, 0, width, height);
+        if (Build.VERSION.SDK_INT >= 30) {
+            var insets = windows.getMaximumWindowMetrics().getWindowInsets()
+                    .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+            area.set(insets.left, insets.top, width - insets.right, height - insets.bottom);
+        } else {
+            // Older overlay windows use the platform's status/navigation bar bounds.
+            area.top = dp(26);
+            area.bottom = Math.max(area.top + 1, height - dp(48));
+        }
+        controls = new FloatingControls(this, area, handler, this::repositionControls,
+                () -> editRegion(-1), this::showRegions, () -> {
+                    paused = !paused;
+                    invalidateResults();
+                    controls.setPaused(paused);
+                }, this::stopSelf);
+        controls.setPaused(paused);
+        var position = controls.position();
+        attach(controls, params(position.width(), position.height(), position.x(), position.y()));
     }
 
-    private TextView control(String icon, String description, Runnable action) {
-        TextView view = new TextView(this);
-        view.setLayoutParams(new LinearLayout.LayoutParams(dp(42), dp(42)));
-        view.setGravity(Gravity.CENTER);
-        view.setText(icon);
-        view.setTextColor(0xffffffff);
-        view.setTextSize(21);
-        view.setContentDescription(description);
-        view.setOnClickListener(v -> action.run());
-        return view;
+    private void repositionControls() {
+        if (controls == null || closed || !controls.isAttachedToWindow()) return;
+        var position = controls.position();
+        var layout = (WindowManager.LayoutParams) controls.getLayoutParams();
+        layout.width = position.width();
+        layout.height = position.height();
+        layout.x = position.x();
+        layout.y = position.y();
+        windows.updateViewLayout(controls, layout);
+        handler.removeCallbacks(refreshTags);
+        if (!controls.isDragging()) handler.postDelayed(refreshTags, 50);
     }
 
     private void editRegion(int index) {
         if (index < 0 && areas.size() >= Regions.LIMIT) { toast("最多保存 16 个选区"); return; }
         remove(editor);
         invalidateResults();
-        toolbar.setVisibility(View.GONE);
+        controls.collapse();
+        controls.setVisibility(View.GONE);
         editor = new RegionEditor(this, width, height, index < 0 ? null : areas.get(index), (name, rect) -> {
             remove(editor); editor = null;
-            toolbar.setVisibility(View.VISIBLE);
+            controls.setVisibility(View.VISIBLE);
             if (rect != null) {
                 Regions.Area area = new Regions.Area(name.isEmpty() ? "选区 " + (index < 0 ? areas.size() + 1 : index + 1) : name, rect);
                 if (index < 0) areas.add(area); else areas.set(index, area);
