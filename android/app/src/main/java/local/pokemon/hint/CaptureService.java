@@ -25,6 +25,8 @@ public final class CaptureService extends Service {
     static boolean active;
     private static final String STOP = "local.pokemon.hint.STOP";
     private static final String CHANNEL = "screen_capture";
+    private Dex.Typing[] typing = new Dex.Typing[0];
+    private AlertDialog typingDialog;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<View> tags = new ArrayList<>();
     private final List<Rect> tagBounds = new ArrayList<>();
@@ -34,6 +36,7 @@ public final class CaptureService extends Service {
     private VirtualDisplay display;
     private ImageReader reader;
     private TextRecognizer recognizer;
+    private Dex.Catalogs catalogs;
     private Dex dex;
     private Dex.Language language;
     private List<Regions.Area> areas = new ArrayList<>();
@@ -50,6 +53,10 @@ public final class CaptureService extends Service {
     private final Runnable refreshTags = this::renderTags;
     private final SharedPreferences.OnSharedPreferenceChangeListener tagSettings = (settings, key) -> {
         if (MainActivity.SHOW_ALL_WEAKNESSES.equals(key)) renderTags();
+        if (MainActivity.MODERN_DEX.equals(key) && !closed) {
+            dex = catalogs.ocr(modernMode());
+            invalidateResults();
+        }
     };
     private Rect popupBounds;
     private String regionKey;
@@ -69,8 +76,8 @@ public final class CaptureService extends Service {
             windows = getSystemService(WindowManager.class);
             prefs = getSharedPreferences(MainActivity.PREFS, MODE_PRIVATE);
             language = Dex.Language.values()[Math.max(0, Math.min(2, prefs.getInt("language", 0)))];
-            var assets = getAssets();
-            dex = new Dex(assets.open("species.tsv"), assets.open("species_names.tsv"), assets.open("type_chart.txt"));
+            catalogs = Dex.load(this);
+            dex = catalogs.ocr(modernMode());
             recognizer = switch (language) {
                 case ZH -> TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
                 case EN -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
@@ -143,6 +150,8 @@ public final class CaptureService extends Service {
         stable = new Dex.Species[areas.size()];
         observed = new long[areas.size()];
         missingSince = new long[areas.size()];
+        typing = new Dex.Typing[areas.size()];
+        Arrays.fill(typing, Dex.Typing.BASE);
         ImageReader next = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
         ImageReader old = reader;
         reader = next;
@@ -166,7 +175,7 @@ public final class CaptureService extends Service {
         List<Bitmap> crops = null;
         List<Integer> indices;
         try (Image image = source.acquireLatestImage()) {
-            if (image == null || paused || editor != null || busy || areas.isEmpty()
+            if (image == null || paused || editor != null || typingDialog != null || busy || areas.isEmpty()
                     || SystemClock.uptimeMillis() < nextRound) return;
             long now = SystemClock.uptimeMillis();
             expireResults(now);
@@ -285,6 +294,7 @@ public final class CaptureService extends Service {
             last[index] = match;
             if (confirmed != previous) {
                 stable[index] = confirmed;
+                typing[index] = Dex.Typing.BASE;
                 if (confirmed != null) History.record(prefs, confirmed.id());
                 if (selectedDetail == index) closeDetails();
                 renderTags();
@@ -301,6 +311,7 @@ public final class CaptureService extends Service {
             last[i] = null;
             if (stable[i] != null) {
                 stable[i] = null;
+                typing[i] = Dex.Typing.BASE;
                 changed = true;
                 if (selectedDetail == i) closeDetails();
             }
@@ -310,6 +321,8 @@ public final class CaptureService extends Service {
 
     private void invalidateResults() {
         generation++;
+        if (typingDialog != null) typingDialog.dismiss();
+        Arrays.fill(typing, Dex.Typing.BASE);
         Arrays.fill(last, null);
         Arrays.fill(stable, null);
         Arrays.fill(missingSince, 0);
@@ -455,6 +468,8 @@ public final class CaptureService extends Service {
         stable = new Dex.Species[areas.size()];
         observed = new long[areas.size()];
         missingSince = new long[areas.size()];
+        typing = new Dex.Typing[areas.size()];
+        Arrays.fill(typing, Dex.Typing.BASE);
     }
 
     private void showRegions() {
@@ -492,13 +507,15 @@ public final class CaptureService extends Service {
         if (closed || editor != null) return;
         clearTags();
         boolean showAll = prefs.getBoolean(MainActivity.SHOW_ALL_WEAKNESSES, false);
+        boolean modern = modernMode();
         int tip = dp(8);
         for (int i = 0; i < stable.length; i++) {
             if (stable[i] == null) continue;
             int index = i;
             Rect region = areas.get(i).rect();
             TextView label = new TextView(this);
-            label.setText(dex.label(stable[i], showAll));
+            var card = catalogs.card(stable[i].id(), modern, typing[i]);
+            label.setText(card.rules().label(card.entry(), showAll));
             label.setTextColor(0xff9e2830);
             label.setTextSize(14);
             label.setGravity(Gravity.CENTER);
@@ -521,6 +538,8 @@ public final class CaptureService extends Service {
             attach(bubble, params(w, h, location.left, location.top));
         }
     }
+
+    private boolean modernMode() { return prefs.getBoolean(MainActivity.MODERN_DEX, false); }
 
     private Rect place(Rect region, int w, int h, boolean tag) {
         int gap = dp(4);
@@ -548,7 +567,14 @@ public final class CaptureService extends Service {
         Dex.Species entry = stable[index];
         if (entry == null) return;
         Rect region = areas.get(index).rect();
-        View rows = HintUi.card(this, dex, entry, language, this::closeDetails);
+        var card = catalogs.card(entry.id(), modernMode(), typing[index]);
+        View rows = HintUi.resultCard(this, card, language, this::closeDetails, selected -> {
+            if (closed || selectedDetail != index || index >= stable.length || stable[index] != entry) return;
+            typing[index] = selected;
+            closeDetails();
+            renderTags();
+            showDetails(index);
+        }, this::showTypingDialog);
         int w = Math.min(width - dp(12), dp(345));
         rows.measure(View.MeasureSpec.makeMeasureSpec(w - dp(8), View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
         int h = Math.min(height - dp(62), rows.getMeasuredHeight() + dp(16));
@@ -561,6 +587,17 @@ public final class CaptureService extends Service {
         bubble.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
         selectedDetail = index;
         showPopup(bubble, location);
+    }
+
+    private void showTypingDialog(AlertDialog dialog) {
+        if (typingDialog != null) return;
+        typingDialog = dialog;
+        typingDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        typingDialog.setOnDismissListener(dismissed -> {
+            typingDialog = null;
+            nextRound = 0;
+        });
+        typingDialog.show();
     }
 
     private void showPopup(View view, Rect rect) {

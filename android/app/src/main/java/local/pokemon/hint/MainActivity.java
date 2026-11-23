@@ -10,6 +10,7 @@ import android.view.*;
 import android.widget.*;
 
 public final class MainActivity extends Activity {
+    static final String MODERN_DEX = "modern_dex";
     static final String PREFS = "settings";
     static final String SHOW_ALL_WEAKNESSES = "show_all_weaknesses";
     static final int[] INTERVALS = {2000, 1000, 500, 250};
@@ -18,8 +19,12 @@ public final class MainActivity extends Activity {
     private LinearLayout result, history;
     private SharedPreferences prefs;
     private ScrollView scroll;
-    private Dex dex;
+    private Dex.Catalogs catalogs;
     private Dex.Species current;
+    private Dex.Typing typing = Dex.Typing.BASE;
+    private final SharedPreferences.OnSharedPreferenceChangeListener historyListener = (settings, key) -> {
+        if (History.KEY.equals(key)) renderHistory();
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -103,8 +108,7 @@ public final class MainActivity extends Activity {
             body.addView(history, layout);
         } else addSection(body, history, 14);
         try {
-            var assets = getAssets();
-            dex = new Dex(assets.open("species.tsv"), assets.open("species_names.tsv"), assets.open("type_chart.txt"));
+            catalogs = Dex.load(this);
         } catch (Exception error) {
             resultMessage("无法加载本地图鉴", "");
         }
@@ -113,7 +117,13 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         captureState.setText(CaptureService.active ? "识别服务运行中" : "已暂停");
+        prefs.registerOnSharedPreferenceChangeListener(historyListener);
         renderHistory();
+    }
+
+    @Override protected void onPause() {
+        prefs.unregisterOnSharedPreferenceChangeListener(historyListener);
+        super.onPause();
     }
 
     private void addTool(LinearLayout toolbar, int resource, String label, boolean primary, Runnable action) {
@@ -133,8 +143,10 @@ public final class MainActivity extends Activity {
     }
 
     private void lookup(EditText query) {
-        if (dex == null) return;
-        display(dex.lookup(query.getText().toString(), true));
+        if (catalogs == null) return;
+        Dex.Species entry = catalogs.modern().lookup(query.getText().toString(), true);
+        display(entry);
+        if (entry != null) History.record(prefs, entry.id());
         getSystemService(android.view.inputmethod.InputMethodManager.class)
                 .hideSoftInputFromWindow(query.getWindowToken(), 0);
         query.clearFocus();
@@ -142,12 +154,21 @@ public final class MainActivity extends Activity {
 
     private void display(Dex.Species entry) {
         current = entry;
+        typing = Dex.Typing.BASE;
         if (entry == null) {
             resultMessage("未匹配到物种", "试试完整名字或全国编号。");
             return;
         }
+        renderResult();
+    }
+
+    private void renderResult() {
         result.removeAllViews();
-        result.addView(HintUi.card(this, dex, entry, language(), null));
+        var card = catalogs.card(current.id(), prefs.getBoolean(MODERN_DEX, false), typing);
+        result.addView(HintUi.resultCard(this, card, language(), null, selected -> {
+            typing = selected;
+            renderResult();
+        }, AlertDialog::show));
     }
 
     private void resultMessage(String title, String hint) {
@@ -168,23 +189,23 @@ public final class MainActivity extends Activity {
 
     private void renderHistory() {
         history.removeAllViews();
-        history.addView(HintUi.text(this, "识别历史", 17, HintUi.INK, true));
+        history.addView(HintUi.text(this, "查询历史", 17, HintUi.INK, true));
         var ids = History.read(prefs);
-        if (dex == null || ids.isEmpty()) {
-            addSection(history, HintUi.text(this, "暂无识别记录", 14, HintUi.MUTED, false), 8);
+        if (catalogs == null || ids.isEmpty()) {
+            addSection(history, HintUi.text(this, "暂无记录", 14, HintUi.MUTED, false), 8);
             return;
         }
+        boolean modernMode = prefs.getBoolean(MODERN_DEX, false);
         for (int id : ids) {
-            Dex.Species entry = dex.lookup(Integer.toString(id), true);
-            if (entry == null) continue;
-            TextView item = HintUi.text(this, dex.title(entry, language()), 14, HintUi.INK, false);
+            var card = catalogs.card(id, modernMode, Dex.Typing.BASE);
+            TextView item = HintUi.text(this, card.rules().title(card.entry(), language()), 14, HintUi.INK, false);
             item.setGravity(Gravity.CENTER_VERTICAL);
             item.setMinHeight(dp(44));
             item.setPadding(dp(10), dp(5), dp(10), dp(5));
             item.setBackground(HintUi.panel(this, HintUi.PAGE, 8));
             item.setFocusable(true);
             item.setOnClickListener(view -> {
-                display(entry);
+                display(card.base());
                 scroll.smoothScrollTo(0, 0);
             });
             addSection(history, item, 6);
@@ -204,6 +225,10 @@ public final class MainActivity extends Activity {
         allWeaknesses.setText("显示全部弱点（合并为一个标签）");
         allWeaknesses.setChecked(prefs.getBoolean(SHOW_ALL_WEAKNESSES, false));
         addSection(settings, allWeaknesses, 8);
+        CheckBox modern = new CheckBox(this);
+        modern.setText("现代图鉴（001–1025，18 属性）");
+        modern.setChecked(prefs.getBoolean(MODERN_DEX, false));
+        addSection(settings, modern, 4);
 
         ScrollView settingsScroll = new ScrollView(this);
         settingsScroll.addView(settings);
@@ -211,11 +236,13 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("应用", (dialog, button) -> {
                     int newLanguage = languages.getSelectedItemPosition();
                     boolean changed = newLanguage != language().ordinal();
-                    prefs.edit().putInt("language", newLanguage)
+                    boolean modeChanged = modern.isChecked() != prefs.getBoolean(MODERN_DEX, false);
+                    prefs.edit().putBoolean(MODERN_DEX, modern.isChecked()).putInt("language", newLanguage)
                             .putInt("rate", rates.getSelectedItemPosition())
                             .putBoolean(SHOW_ALL_WEAKNESSES, allWeaknesses.isChecked()).apply();
                     status.setText(changed && CaptureService.active ? "重新开启识别后会切换语言。" : "识别设置已保存");
-                    if (current != null) display(current);
+                    if (current != null && modeChanged) display(current);
+                    else if (current != null) renderResult();
                     renderHistory();
                 }).show();
     }

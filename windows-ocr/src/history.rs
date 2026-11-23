@@ -1,7 +1,7 @@
 //! Recognition history shown in the main window: newest first, capped at
 //! [`MAX_HISTORY`], and coalesced per region so continuous polling does not
-//! flood the list. Only the matched species, region name, and local clock are
-//! stored; raw OCR text can contain player names, so it is never kept.
+//! flood the list. Manual searches use the same list. Only the species, region
+//! name (blank for manual searches), and local clock are stored.
 
 pub const MAX_HISTORY: usize = 20;
 const STORE_VERSION: &str = "pokemon-recognition-history-v1";
@@ -30,12 +30,17 @@ impl History {
     pub fn get(&self, index: usize) -> Option<&HistoryEntry> {
         self.entries.get(index)
     }
+    pub fn record_manual(&mut self, id: u16, clock: &str) -> bool {
+        // OCR regions have nonempty names. A blank name preserves the source
+        // in the existing on-disk format without storing the search text.
+        self.record(id, "", clock)
+    }
     /// Records a stable sighting as the newest entry and reports whether the
     /// list changed. A region that keeps reading the same species is ignored;
     /// a different species in that region adds a new entry. Entries beyond the
     /// cap are dropped from the oldest end.
     pub fn record(&mut self, id: u16, region: &str, clock: &str) -> bool {
-        if !(1..=649).contains(&id) {
+        if !(1..=crate::modern::MAX_SPECIES).contains(&id) {
             return false;
         }
         let clock = sanitize_clock(clock);
@@ -43,24 +48,17 @@ impl History {
             return false;
         }
         let region = sanitize_region(region);
-        // Only the newest sighting of this region matters: alternating regions
-        // must not append the same species every polling round.
-        if self
-            .entries
-            .iter()
-            .find(|entry| entry.region == region)
-            .is_some_and(|entry| entry.id == id)
-        {
+        let previous = if region.is_empty() {
+            // A manual search is deliberate. Record it again after a different
+            // result, even if it matches the previous manual search.
+            self.entries.first().filter(|entry| entry.region.is_empty())
+        } else {
+            self.entries.iter().find(|entry| entry.region == region)
+        };
+        if previous.is_some_and(|entry| entry.id == id) {
             return false;
         }
-        self.entries.insert(
-            0,
-            HistoryEntry {
-                id,
-                region,
-                clock,
-            },
-        );
+        self.entries.insert(0, HistoryEntry { id, region, clock });
         self.entries.truncate(MAX_HISTORY);
         true
     }
@@ -95,7 +93,7 @@ impl History {
             let Ok(id) = id.parse::<u16>() else {
                 continue;
             };
-            if !(1..=649).contains(&id) {
+            if !(1..=crate::modern::MAX_SPECIES).contains(&id) {
                 continue;
             }
             let clock = sanitize_clock(clock);
@@ -186,7 +184,7 @@ mod tests {
             "pokemon-recognition-history-v1\n",
             "entry=6,11-09 10:00,选区 1\n",
             "entry=0,11-09 10:00,越界\n",
-            "entry=650,11-09 10:00,越界\n",
+            "entry=1026,11-09 10:00,越界\n",
             "entry=abc,11-09 10:00,坏编号\n",
             "entry=25,11-09 10:01\n",
             "entry=150,   ,空时间\n",
@@ -209,8 +207,23 @@ mod tests {
     fn invalid_species_or_clock_is_rejected() {
         let mut history = History::default();
         assert!(!history.record(0, "选区 1", "11-09 10:00"));
-        assert!(!history.record(650, "选区 1", "11-09 10:00"));
+        assert!(!history.record(1026, "选区 1", "11-09 10:00"));
         assert!(!history.record(6, "选区 1", "  "));
         assert!(history.is_empty());
+    }
+
+    #[test]
+    fn modern_manual_lookups_are_stored_independently_of_ocr() {
+        let mut history = History::default();
+        assert!(history.record(888, "选区 1", "11-09 10:00"));
+        assert!(history.record_manual(888, "11-09 10:01"));
+        assert!(!history.record_manual(888, "11-09 10:02"));
+        assert!(history.record_manual(1025, "11-09 10:03"));
+        assert!(history.record(6, "选区 1", "11-09 10:04"));
+        assert!(history.record_manual(1025, "11-09 10:05"));
+        let restored = History::parse(&history.encode());
+        assert_eq!(restored, history);
+        assert_eq!(ids(&restored), [1025, 6, 1025, 888, 888]);
+        assert!(restored.get(0).unwrap().region.is_empty());
     }
 }

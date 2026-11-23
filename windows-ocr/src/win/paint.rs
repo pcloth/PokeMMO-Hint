@@ -178,12 +178,7 @@ unsafe fn effects_end(
     }
     (line * 96 / dpi as i32) + 40
 }
-pub(super) unsafe fn card_height(
-    theme: &Theme,
-    dpi: u32,
-    card: &HintCard,
-    lang: Language,
-) -> i32 {
+pub(super) unsafe fn card_height(theme: &Theme, dpi: u32, card: &HintCard, lang: Language) -> i32 {
     let dc = GetDC(0);
     let mut y = 215;
     for items in [
@@ -321,7 +316,13 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
         app.theme.small,
         MUTED,
         &format!("{} / {}", app.history.len(), MAX_HISTORY),
-        rect(dpi, HISTORY_LEFT + HISTORY_WIDTH - 56, HISTORY_TOP + 13, 44, 20),
+        rect(
+            dpi,
+            HISTORY_LEFT + HISTORY_WIDTH - 56,
+            HISTORY_TOP + 13,
+            44,
+            20,
+        ),
         2 | 0x20,
     );
     if app.history.is_empty() {
@@ -330,7 +331,13 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             app.theme.body,
             MUTED,
             t.history_empty,
-            rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 190, HISTORY_WIDTH - 16, 26),
+            rect(
+                dpi,
+                HISTORY_LEFT + 8,
+                HISTORY_TOP + 190,
+                HISTORY_WIDTH - 16,
+                26,
+            ),
             1 | 0x20,
         );
         text(
@@ -338,28 +345,69 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             app.theme.small,
             MUTED,
             t.history_hint,
-            rect(dpi, HISTORY_LEFT + 8, HISTORY_TOP + 220, HISTORY_WIDTH - 16, 72),
+            rect(
+                dpi,
+                HISTORY_LEFT + 8,
+                HISTORY_TOP + 220,
+                HISTORY_WIDTH - 16,
+                72,
+            ),
             1 | 0x10,
         );
     }
+    rounded(
+        dc,
+        rect(dpi, 20, 136, 580, app.card_height),
+        WHITE,
+        BORDER,
+        px(18, dpi),
+    );
     if let Some(card) = &app.card {
-        draw_card(
+        let typing = app.battle_typing();
+        let caption = match (app.active_card_tab(), app.language) {
+            (Some(CardTab::Dynamax), Language::Zh) => "《剑／盾》极巨化不会改变原形态的防守属性",
+            (Some(CardTab::Dynamax), Language::En) => {
+                "Dynamax in Sword and Shield keeps the form’s defensive types."
+            }
+            (Some(CardTab::Dynamax), Language::Ja) => {
+                "『ソード・シールド』のダイマックスでは防御側のタイプは変化しません"
+            }
+            (Some(CardTab::Tera), Language::Zh) if typing.tera.is_none() => {
+                "请选择太晶属性 · 当前显示太晶化前的相克"
+            }
+            (Some(CardTab::Tera), Language::En) if typing.tera.is_none() => {
+                "Choose a Tera type. Showing matchups before Terastallizing."
+            }
+            (Some(CardTab::Tera), Language::Ja) if typing.tera.is_none() => {
+                "テラタイプを選択してください。テラスタル前の相性を表示中"
+            }
+            (Some(CardTab::Tera), Language::Zh)
+                if typing.active_tera(card.id) == Some(modern::TYPE_COUNT) =>
+            {
+                "星晶保留太晶化前的防守属性"
+            }
+            (Some(CardTab::Tera), Language::En)
+                if typing.active_tera(card.id) == Some(modern::TYPE_COUNT) =>
+            {
+                "Stellar keeps the form’s defensive types."
+            }
+            (Some(CardTab::Tera), Language::Ja)
+                if typing.active_tera(card.id) == Some(modern::TYPE_COUNT) =>
+            {
+                "ステラでは防御側のタイプは変化しません"
+            }
+            _ => "",
+        };
+        draw_card_content(
             dc,
             &app.theme,
-            app.dpi,
+            dpi,
             card,
-            px(20, app.dpi),
-            px(136, app.dpi),
+            (px(20, dpi), px(136 + CARD_TABS_HEIGHT, dpi)),
+            caption,
             app.language,
         );
     } else {
-        rounded(
-            dc,
-            rect(dpi, 20, 136, 580, app.card_height),
-            WHITE,
-            BORDER,
-            px(18, dpi),
-        );
         let title = if app.suggestion.is_some() {
             t.suggestion_title
         } else if !app.workers.is_empty() {
@@ -398,7 +446,7 @@ pub(super) unsafe fn draw(app: &App, dc: Handle, area: Rect) {
             app.theme.small,
             MUTED,
             t.query_hint,
-            rect(dpi, 327, 442, 271, 22),
+            rect(dpi, 327, 442 + app.card_height - 258, 271, 22),
             0x20 | 0x8000,
         );
     }
@@ -416,6 +464,57 @@ pub(super) struct DrawItem {
     area: Rect,
     data: usize,
 }
+impl DrawItem {
+    pub(super) fn is_card_control(&self) -> bool {
+        let id = self.id as isize;
+        id == CARD_OPTIONS_ID || CardTab::ALL.into_iter().any(|tab| id == tab_id(tab))
+    }
+}
+
+pub(super) unsafe fn card_button(
+    item: &DrawItem,
+    theme: &Theme,
+    dpi: u32,
+    selected: Option<CardTab>,
+) {
+    let mut area = item.area;
+    area.right -= 1;
+    area.bottom -= 1;
+    let selected = selected.is_some_and(|tab| tab_id(tab) == item.id as isize);
+    let disabled = item.state & 4 != 0;
+    let fill = if disabled {
+        BG
+    } else if item.state & 1 != 0 {
+        rgb(214, 229, 250)
+    } else if selected {
+        rgb(232, 242, 255)
+    } else {
+        WHITE
+    };
+    rounded(
+        item.dc,
+        area,
+        fill,
+        if selected { rgb(180, 210, 250) } else { BORDER },
+        px(7, dpi),
+    );
+    text(
+        item.dc,
+        theme.small,
+        if disabled { MUTED } else { INK },
+        &get_text(item.hwnd),
+        area,
+        0x25,
+    );
+    if item.state & 0x10 != 0 {
+        area.left += 3;
+        area.top += 3;
+        area.right -= 3;
+        area.bottom -= 3;
+        DrawFocusRect(item.dc, &area);
+    }
+}
+
 pub(super) unsafe fn button(item: &DrawItem, theme: &Theme, dpi: u32) {
     let primary = item.id == 102;
     let fill = if item.state & 4 != 0 {
@@ -515,17 +614,6 @@ pub(super) unsafe fn paint_window(hwnd: Handle, app: Option<&App>) {
     EndPaint(hwnd, &paint);
 }
 
-pub(super) unsafe fn draw_card(
-    dc: Handle,
-    theme: &Theme,
-    dpi: u32,
-    card: &HintCard,
-    x: i32,
-    y: i32,
-    lang: Language,
-) {
-    draw_card_content(dc, theme, dpi, card, (x, y), true, lang);
-}
 pub(super) unsafe fn draw_bubble_card(
     dc: Handle,
     theme: &Theme,
@@ -536,7 +624,7 @@ pub(super) unsafe fn draw_bubble_card(
     lang: Language,
 ) {
     bubble(dc, body, tail, dpi, WHITE, BORDER, 18);
-    draw_card_content(dc, theme, dpi, card, (body.left, body.top), false, lang);
+    draw_card_content(dc, theme, dpi, card, (body.left, body.top), "", lang);
 }
 unsafe fn bubble(
     dc: Handle,
@@ -580,7 +668,7 @@ unsafe fn draw_card_content(
     dpi: u32,
     card: &HintCard,
     origin: (i32, i32),
-    background: bool,
+    caption: &str,
     lang: Language,
 ) {
     let (x, y) = origin;
@@ -592,15 +680,6 @@ unsafe fn draw_card_content(
     };
     let saved = SaveDC(dc);
     SetViewportOrgEx(dc, x - px(20, dpi), y - px(136, dpi), null_mut());
-    if background {
-        rounded(
-            dc,
-            rect(dpi, 20, 136, 580, card_height(theme, dpi, card, lang)),
-            WHITE,
-            BORDER,
-            px(18, dpi),
-        );
-    }
     text(
         dc,
         app.theme.title,
@@ -630,6 +709,16 @@ unsafe fn draw_card_content(
             color,
         );
         right -= width + px(5, dpi);
+    }
+    if !caption.is_empty() {
+        text(
+            dc,
+            app.theme.small,
+            MUTED,
+            caption,
+            rect(dpi, 40, 183, 540, 17),
+            0x20 | 0x8000,
+        );
     }
     let brush = CreateSolidBrush(BORDER);
     FillRect(dc, &rect(dpi, 40, 200, 540, 1), brush);

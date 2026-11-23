@@ -1,4 +1,5 @@
 pub mod commandline;
+pub mod modern;
 use std::fmt;
 pub mod bitmap;
 pub mod engines;
@@ -79,23 +80,8 @@ pub const TYPE_NAMES_ZH: [&str; 17] = [
     "恶",
 ];
 pub const TYPE_NAMES_EN: [&str; 17] = [
-    "Normal",
-    "Fighting",
-    "Flying",
-    "Poison",
-    "Ground",
-    "Rock",
-    "Bug",
-    "Ghost",
-    "Steel",
-    "Fire",
-    "Water",
-    "Grass",
-    "Electric",
-    "Psychic",
-    "Ice",
-    "Dragon",
-    "Dark",
+    "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "Fire",
+    "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon", "Dark",
 ];
 pub const TYPE_NAMES_JA: [&str; 17] = [
     "ノーマル",
@@ -124,6 +110,13 @@ pub fn type_names(lang: Language) -> &'static [&'static str; 17] {
     }
 }
 pub fn type_name(lang: Language, type_id: usize) -> &'static str {
+    if type_id == 17 {
+        return match lang {
+            Language::Zh => "妖精",
+            Language::En => "Fairy",
+            Language::Ja => "フェアリー",
+        };
+    }
     type_names(lang)[type_id]
 }
 
@@ -133,6 +126,7 @@ pub struct Species {
     /// Invariant: Chinese, English and Japanese names are always present.
     pub names: [String; 3],
     pub types: Vec<usize>,
+    pub modern: bool,
 }
 impl Species {
     pub fn name(&self, lang: Language) -> &str {
@@ -149,6 +143,7 @@ pub struct TypeEffect {
 #[derive(Debug, Clone)]
 pub struct HintCard {
     pub id: u16,
+    pub modern: bool,
     pub name: String,
     pub types: Vec<usize>,
     pub weaknesses: Vec<TypeEffect>,
@@ -160,6 +155,7 @@ pub struct HintCard {
 pub fn hint_card(species: &Species, lang: Language) -> HintCard {
     let mut card = HintCard {
         id: species.id,
+        modern: species.modern,
         name: species.name(lang).to_owned(),
         types: species.types.clone(),
         weaknesses: vec![],
@@ -167,7 +163,11 @@ pub fn hint_card(species: &Species, lang: Language) -> HintCard {
         resistances: vec![],
         immunities: vec![],
     };
-    for type_id in 0..17 {
+    for type_id in 0..(if species.modern {
+        modern::TYPE_COUNT
+    } else {
+        17
+    }) {
         let multiplier = incoming_multiplier(type_id, species);
         let effect = TypeEffect {
             type_id,
@@ -207,6 +207,7 @@ pub fn species_data() -> Vec<Species> {
             Species {
                 id,
                 names: [chinese, english, japanese],
+                modern: false,
                 types: fields[2..]
                     .iter()
                     .filter(|key| !key.is_empty())
@@ -307,14 +308,24 @@ pub fn incoming_multiplier(attack: usize, species: &Species) -> f64 {
     species
         .types
         .iter()
-        .map(|&defense| effectiveness(attack, defense))
+        .map(|&defense| {
+            if species.modern {
+                modern::effectiveness(attack, defense)
+            } else {
+                effectiveness(attack, defense)
+            }
+        })
         .product()
 }
 
 pub fn hint(species: &Species, lang: Language) -> String {
-    let names = type_names(lang);
     let mut groups: Vec<Vec<&str>> = vec![vec![]; 6];
-    for (attack, name) in names.iter().enumerate() {
+    for attack in 0..(if species.modern {
+        modern::TYPE_COUNT
+    } else {
+        17
+    }) {
+        let name = type_name(lang, attack);
         let value = incoming_multiplier(attack, species);
         let group = if value == 4.0 {
             Some(0)
@@ -335,7 +346,13 @@ pub fn hint(species: &Species, lang: Language) -> String {
     }
     let (weak_label, neutral_label, resist_label, immune_label, none) = match lang {
         Language::Zh => ("弱点", "普通伤害（1倍）", "抗性", "免疫", "无"),
-        Language::En => ("Weaknesses", "Neutral (1x)", "Resists", "Immunities", "none"),
+        Language::En => (
+            "Weaknesses",
+            "Neutral (1x)",
+            "Resists",
+            "Immunities",
+            "none",
+        ),
         Language::Ja => ("弱点", "等倍", "耐性", "無効", "なし"),
     };
     let (strong4, strong2, resist2, resist4) = match lang {
@@ -353,7 +370,7 @@ pub fn hint(species: &Species, lang: Language) -> String {
         species
             .types
             .iter()
-            .map(|&t| names[t])
+            .map(|&t| type_name(lang, t))
             .collect::<Vec<_>>()
             .join(" / ")
     )];
@@ -602,9 +619,9 @@ pub fn match_ocr(text: &str, lang: Language, data: &[Species]) -> MatchResult {
     found.retain(|s| {
         !aliases.iter().any(|(other, names)| {
             other.id != s.id
-                && names
-                    .iter()
-                    .any(|name| name.contains(&compact_name(s, lang)) && contains_name(&compact, name))
+                && names.iter().any(|name| {
+                    name.contains(&compact_name(s, lang)) && contains_name(&compact, name)
+                })
         })
     });
     if ids.len() > 1 {
@@ -671,14 +688,15 @@ fn explicit_numbers(text: &str) -> Result<Vec<u16>, ()> {
                 continue;
             }
             let tail: String = chars[start + segment.chars().count()..].iter().collect();
-            if tail.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            if !segment.chars().last().is_some_and(char::is_whitespace)
+                && tail.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
                 && !tail.starts_with("lv")
                 && !tail.starts_with("no")
             {
                 return Err(());
             }
             let id = digits.parse::<u16>().map_err(|_| ())?;
-            if !(1..=649).contains(&id) {
+            if !(1..=modern::MAX_SPECIES).contains(&id) {
                 return Err(());
             }
             if !ids.contains(&id) {
@@ -811,6 +829,7 @@ mod tests {
             id,
             names: [zh.to_owned(), en.to_owned(), ja.to_owned()],
             types: vec![11],
+            modern: false,
         }
     }
     #[test]
@@ -899,10 +918,7 @@ mod tests {
             match_ocr("Lv.573", Language::Zh, &data),
             MatchResult::Unknown
         );
-        assert_eq!(
-            match_ocr("573", Language::Zh, &data),
-            MatchResult::Unknown
-        );
+        assert_eq!(match_ocr("573", Language::Zh, &data), MatchResult::Unknown);
         assert_eq!(
             match_ocr("No.999 奇诺栗鼠", Language::Zh, &data),
             MatchResult::Unknown
@@ -949,10 +965,7 @@ mod tests {
             match_ocr("Lv.29", Language::En, &data),
             MatchResult::Unknown
         );
-        assert_eq!(
-            match_ocr("573", Language::En, &data),
-            MatchResult::Unknown
-        );
+        assert_eq!(match_ocr("573", Language::En, &data), MatchResult::Unknown);
         assert_eq!(
             match_ocr("Pikachu 小火龙", Language::En, &data),
             MatchResult::Found(25)
@@ -985,10 +998,7 @@ mod tests {
             match_ocr("Lv.29", Language::Ja, &data),
             MatchResult::Unknown
         );
-        assert_eq!(
-            match_ocr("573", Language::Ja, &data),
-            MatchResult::Unknown
-        );
+        assert_eq!(match_ocr("573", Language::Ja, &data), MatchResult::Unknown);
     }
     #[test]
     fn matching_rejects_multiple_and_misread_names() {

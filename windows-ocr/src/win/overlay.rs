@@ -104,10 +104,17 @@ impl Window {
     }
     pub(super) unsafe fn set_card(&mut self, card: &HintCard) {
         let mut content = self.context.content.borrow_mut();
-        if content.card.id != card.id {
+        if content.card.id != card.id
+            || content.card.modern != card.modern
+            || content.card.types != card.types
+            || content.card.name != card.name
+        {
             content.card = card.clone();
-            content.label =
-                pokemmo_hint::regions::weakness_label(card, self.context.lang, self.context.all_weaknesses);
+            content.label = pokemmo_hint::regions::weakness_label(
+                card,
+                self.context.lang,
+                self.context.all_weaknesses,
+            );
             InvalidateRect(self.hwnd, null(), 0);
         }
     }

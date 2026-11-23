@@ -35,6 +35,7 @@ pub struct EngineSettings {
     pub ui_language: Language,
     pub game_language: Language,
     pub show_all_weaknesses: bool,
+    pub modern_dex: bool,
 }
 impl Default for EngineSettings {
     fn default() -> Self {
@@ -45,6 +46,7 @@ impl Default for EngineSettings {
             ui_language: Language::Zh,
             game_language: Language::Zh,
             show_all_weaknesses: false,
+            modern_dex: false,
         }
     }
 }
@@ -73,6 +75,8 @@ impl EngineSettings {
                 ("game_language", text) => {
                     value.game_language = Language::parse(text).ok_or("不支持的游戏语言")?
                 }
+                ("modern_dex", "1") => value.modern_dex = true,
+                ("modern_dex", "0") => value.modern_dex = false,
                 ("show_all_weaknesses", "1") => value.show_all_weaknesses = true,
                 ("show_all_weaknesses", "0") => value.show_all_weaknesses = false,
                 ("refresh_interval_ms", text) => {
@@ -89,7 +93,7 @@ impl EngineSettings {
     }
     pub fn encode(self) -> String {
         format!(
-            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\nui_language={}\ngame_language={}\nshow_all_weaknesses={}\n",
+            "pokemon-ocr-engines-v1\nengine={}\nsource={}\nrefresh_interval_ms={}\nui_language={}\ngame_language={}\nshow_all_weaknesses={}\nmodern_dex={}\n",
             if self.engine == Engine::Windows {
                 "windows"
             } else {
@@ -104,6 +108,7 @@ impl EngineSettings {
             self.ui_language.code(),
             self.game_language.code(),
             u8::from(self.show_all_weaknesses),
+            u8::from(self.modern_dex),
         )
     }
     pub fn model_urls(self) -> [String; 2] {
@@ -251,6 +256,7 @@ mod tests {
             ui_language: Language::En,
             game_language: Language::Ja,
             show_all_weaknesses: true,
+            modern_dex: true,
         };
         assert_eq!(EngineSettings::parse(&a.encode()).unwrap(), a);
         assert!(a.model_urls()[0].starts_with("https://hf-mirror.com/"));
@@ -265,10 +271,10 @@ mod tests {
                 .refresh_interval_ms,
             1000
         );
-        assert!(EngineSettings::parse(
-            "pokemon-ocr-engines-v1\nengine=windows\nui_language=xx\n"
-        )
-        .is_err());
+        assert!(
+            EngineSettings::parse("pokemon-ocr-engines-v1\nengine=windows\nui_language=xx\n")
+                .is_err()
+        );
         for lang in Language::ALL {
             let settings = EngineSettings {
                 ui_language: lang,

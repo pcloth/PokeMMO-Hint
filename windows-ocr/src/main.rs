@@ -1,6 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use pokemmo_hint::{hint, lookup_query, match_ocr, species_data, Language, MatchResult};
+use pokemmo_hint::{hint, match_ocr, modern, Language, MatchResult};
 
 #[cfg(any(windows, feature = "windows-check"))]
 mod ocr;
@@ -39,9 +39,9 @@ fn cli_language() -> Language {
 
 fn usage(language: Language) -> String {
     match language {
-        Language::Zh => "用法：pokemmo-hint [--lang zh|en|ja] [--game-lang zh|en|ja] [--text 名字或编号 | --image 图片路径]；不带参数打开 Windows 窗口",
-        Language::En => "Usage: pokemmo-hint [--lang zh|en|ja] [--game-lang zh|en|ja] [--text name-or-number | --image path]; run without arguments to open the Windows window",
-        Language::Ja => "使い方: pokemmo-hint [--lang zh|en|ja] [--game-lang zh|en|ja] [--text 名前または番号 | --image 画像パス]。引数なしで Windows ウィンドウを開きます",
+        Language::Zh => "用法：pokemmo-hint [--modern] [--lang zh|en|ja] [--game-lang zh|en|ja] [--text 名字或编号 | --image 图片路径]；不带参数打开 Windows 窗口",
+        Language::En => "Usage: pokemmo-hint [--modern] [--lang zh|en|ja] [--game-lang zh|en|ja] [--text name-or-number | --image path]; run without arguments to open the Windows window",
+        Language::Ja => "使い方: pokemmo-hint [--modern] [--lang zh|en|ja] [--game-lang zh|en|ja] [--text 名前または番号 | --image 画像パス]。引数なしで Windows ウィンドウを開きます",
     }
     .to_owned()
 }
@@ -59,10 +59,15 @@ fn run() -> Result<(), String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut language = Language::Zh;
     let mut game_language = None;
+    let mut modern_dex = false;
     let mut args = Vec::new();
     let mut index = 0;
     while index < raw.len() {
         match raw[index].as_str() {
+            "--modern" => {
+                modern_dex = true;
+                index += 1;
+            }
             "--lang" | "--game-lang" => {
                 let flag = raw[index].clone();
                 let value = raw.get(index + 1).ok_or_else(|| usage(language))?;
@@ -120,7 +125,7 @@ fn run() -> Result<(), String> {
                     "文字または画像パスを指定してください。",
                 )
             })?;
-            let data = species_data();
+            let data = modern::species(modern_dex);
             let result = if flag == "--image" {
                 let text = recognize_image(value, game_language).map_err(|error| {
                     if error == "PADDLE_NOT_READY" {
@@ -150,20 +155,25 @@ fn run() -> Result<(), String> {
                     }
                 })?;
                 println!("OCR: {text}");
-                match_ocr(&text, game_language, &data)
+                match_ocr(&text, game_language, data)
             } else {
-                lookup_query(value, game_language, &data)
+                modern::manual_match(value)
             };
             match result {
                 MatchResult::Found(id) => {
-                    println!("{}", hint(data.iter().find(|s| s.id == id).unwrap(), language))
+                    let entry = if flag == "--text" {
+                        modern::manual_species(id, modern_dex)
+                    } else {
+                        data.iter().find(|entry| entry.id == id)
+                    }.expect("matched species");
+                    println!("{}", hint(entry, language));
                 }
                 MatchResult::Unknown => {
                     return Err(localized(
                         language,
-                        "未匹配；请输入所选游戏语言的物种名或全国编号",
-                        "No match. Enter a species name in the selected game language or a National No.",
-                        "一致しません。選択したゲーム言語の種族名または全国図鑑番号を入力してください。",
+                        "未匹配；请输入中文、英文、日文物种名或全国编号",
+                        "No match. Enter a Chinese, English, or Japanese species name or a National No.",
+                        "一致しません。中国語・英語・日本語の種族名または全国図鑑番号を入力してください。",
                     ))
                 }
                 MatchResult::Ambiguous => {

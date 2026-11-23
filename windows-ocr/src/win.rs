@@ -6,9 +6,9 @@ use crate::ocr::Backend;
 use pokemmo_hint::bitmap::{binary_bitmap, ocr_bitmap, white_text_bitmap};
 use pokemmo_hint::engines::{self, EngineSettings};
 use pokemmo_hint::history::History;
+use pokemmo_hint::modern::{BattleTyping, CardTab};
 use pokemmo_hint::{
-    hint_card, lookup_query, resolve_reads, species_data, HintCard, Language, MatchResult,
-    NameSuggestion, Roi, Tracker,
+    hint_card, modern, resolve_reads, HintCard, Language, MatchResult, NameSuggestion, Roi, Tracker,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -112,6 +112,18 @@ extern "system" {
     fn GetDpiForWindow(hwnd: Handle) -> u32;
     fn AdjustWindowRectExForDpi(rect: *mut Rect, style: u32, menu: i32, ex: u32, dpi: u32) -> i32;
     fn EnableWindow(hwnd: Handle, enable: i32) -> i32;
+    fn CreatePopupMenu() -> Handle;
+    fn AppendMenuW(menu: Handle, flags: u32, id: usize, label: *const u16) -> i32;
+    fn TrackPopupMenu(
+        menu: Handle,
+        flags: u32,
+        x: i32,
+        y: i32,
+        reserved: i32,
+        hwnd: Handle,
+        rect: *const Rect,
+    ) -> i32;
+    fn DestroyMenu(menu: Handle) -> i32;
     fn SetForegroundWindow(hwnd: Handle) -> i32;
     fn GetCursorPos(point: *mut Point) -> i32;
     fn SetWindowDisplayAffinity(hwnd: Handle, affinity: u32) -> i32;
@@ -278,6 +290,9 @@ const WM_TIMER: u32 = 0x113;
 const USER_DATA: i32 = -21;
 // Right-hand recognition history column, in logical pixels.
 const HISTORY_LIST_ID: isize = 112;
+const CARD_OPTIONS_ID: isize = 113;
+const FIRST_CARD_TAB_ID: isize = 114;
+const CARD_TABS_HEIGHT: i32 = 40;
 const HISTORY_LEFT: i32 = 620;
 const HISTORY_TOP: i32 = 58;
 const HISTORY_WIDTH: i32 = 240;
@@ -355,10 +370,145 @@ struct Update {
     card: Option<HintCard>,
     suggestion: Option<NameSuggestion>,
 }
+fn tab_label(tab: CardTab, lang: Language) -> &'static str {
+    match (tab, lang) {
+        (CardTab::Legacy, _) => "PokeMMO",
+        (CardTab::Modern, Language::Zh) => "现代",
+        (CardTab::Modern, Language::En) => "Modern",
+        (CardTab::Modern, Language::Ja) => "現行",
+        (CardTab::Tera, Language::Zh) => "太晶化",
+        (CardTab::Tera, Language::En) => "Terastallize",
+        (CardTab::Tera, Language::Ja) => "テラスタル",
+        (CardTab::Dynamax, Language::Zh) => "极巨化",
+        (CardTab::Dynamax, Language::En) => "Dynamax",
+        (CardTab::Dynamax, Language::Ja) => "ダイマックス",
+    }
+}
+
+fn tab_options_label(tab: CardTab, lang: Language) -> &'static str {
+    match (tab, lang) {
+        (CardTab::Tera, Language::Zh) => "选择太晶属性",
+        (CardTab::Tera, Language::En) => "Choose Tera Type",
+        (CardTab::Tera, Language::Ja) => "テラタイプを選択",
+        (CardTab::Dynamax, Language::Zh) => "选择极巨形态",
+        (CardTab::Dynamax, Language::En) => "Dynamax Options",
+        (CardTab::Dynamax, Language::Ja) => "ダイマックス設定",
+        (_, Language::Zh) => "选择形态",
+        (_, Language::En) => "Choose Form",
+        (_, Language::Ja) => "フォルムを選択",
+    }
+}
+
+fn tab_id(tab: CardTab) -> isize {
+    FIRST_CARD_TAB_ID + tab as isize
+}
+
+fn choose_typing(
+    hwnd: Handle,
+    id: u16,
+    tab: CardTab,
+    lang: Language,
+    mut typing: BattleTyping,
+) -> Option<BattleTyping> {
+    let (form_label, base, none, stellar, dynamax, gigantamax) = match lang {
+        Language::Zh => ("形态", "默认形态", "未太晶化", "星晶", "极巨化", "超极巨化"),
+        Language::En => (
+            "Form",
+            "Default form",
+            "Not Terastallized",
+            "Stellar",
+            "Dynamax",
+            "Gigantamax",
+        ),
+        Language::Ja => (
+            "フォルム",
+            "通常の姿",
+            "テラスタルなし",
+            "ステラ",
+            "ダイマックス",
+            "キョダイマックス",
+        ),
+    };
+    unsafe {
+        let menu = CreatePopupMenu();
+        if menu == 0 {
+            return None;
+        }
+        let add = |menu, id, label: &str, checked| {
+            AppendMenuW(menu, if checked { 8 } else { 0 }, id, wide(label).as_ptr());
+        };
+        if tab == CardTab::Tera {
+            add(menu, 1000, none, typing.tera.is_none());
+            for index in 0..=modern::TYPE_COUNT {
+                if typing.fixed_tera(id).is_some_and(|fixed| fixed != index) {
+                    continue;
+                }
+                let label = if index == modern::TYPE_COUNT {
+                    stellar
+                } else {
+                    pokemmo_hint::type_name(lang, index)
+                };
+                add(
+                    menu,
+                    1001 + index,
+                    label,
+                    typing.active_tera(id) == Some(index),
+                );
+            }
+        } else if tab == CardTab::Dynamax && typing.can_gigantamax(id) {
+            add(menu, 20, dynamax, !typing.gigantamax);
+            add(menu, 21, gigantamax, typing.gigantamax);
+        }
+        let forms = modern::forms(id)
+            .enumerate()
+            .filter(|(_, form)| tab != CardTab::Dynamax || BattleTyping::dynamax_form(form))
+            .collect::<Vec<_>>();
+        if !forms.is_empty() {
+            let form_menu = if tab == CardTab::Modern {
+                menu
+            } else {
+                CreatePopupMenu()
+            };
+            if form_menu != 0 {
+                let selected = typing
+                    .form
+                    .filter(|index| forms.iter().any(|(i, _)| i == index));
+                add(form_menu, 100, base, selected.is_none());
+                for (index, form) in forms {
+                    add(
+                        form_menu,
+                        101 + index,
+                        &form.menu_label(lang),
+                        selected == Some(index),
+                    );
+                }
+                if form_menu != menu
+                    && AppendMenuW(menu, 0x10, form_menu as usize, wide(form_label).as_ptr()) == 0
+                {
+                    DestroyMenu(form_menu);
+                }
+            }
+        }
+        let mut anchor = Rect::default();
+        GetWindowRect(GetDlgItem(hwnd, CARD_OPTIONS_ID as i32), &mut anchor);
+        let choice = TrackPopupMenu(menu, 0x180, anchor.left, anchor.bottom, 0, hwnd, null());
+        DestroyMenu(menu);
+        match choice {
+            20 | 21 => typing.gigantamax = choice == 21,
+            100 => typing.form = None,
+            101..=999 => typing.form = Some((choice - 101) as usize),
+            1000 => typing.tera = None,
+            1001..=1019 => typing.tera = Some((choice - 1001) as usize),
+            _ => return None,
+        }
+        Some(typing)
+    }
+}
 struct SlotState {
     last: Option<Update>,
     updated: Instant,
     tag: Option<overlay::Window>,
+    typing: BattleTyping,
 }
 impl Default for SlotState {
     fn default() -> Self {
@@ -366,6 +516,7 @@ impl Default for SlotState {
             last: None,
             updated: Instant::now(),
             tag: None,
+            typing: BattleTyping::default(),
         }
     }
 }
@@ -395,6 +546,7 @@ struct App {
     last_hover: Instant,
     occlusions: Arc<Mutex<Vec<Rect>>>,
     manual_preview: bool,
+    manual_typing: BattleTyping,
     rx: Option<mpsc::Receiver<Update>>,
     stop: Arc<AtomicBool>,
     workers: Vec<thread::JoinHandle<()>>,
@@ -435,11 +587,18 @@ impl App {
         self.suggestion = suggestion;
         self.layout_card();
         unsafe {
+            self.update_card_tabs();
             if let Some(s) = &self.suggestion {
-                if let Some(species) = species_data().iter().find(|p| p.id == s.id) {
+                if let Some(species) = modern::species(self.engine_settings.modern_dex)
+                    .iter()
+                    .find(|p| p.id == s.id)
+                {
                     set_text(
                         self.confirm,
-                        &i18n::fill(self.text.confirm_named, &[("name", species.name(self.language))]),
+                        &i18n::fill(
+                            self.text.confirm_named,
+                            &[("name", species.name(self.language))],
+                        ),
                     );
                     ShowWindow(self.confirm, 5);
                 }
@@ -457,7 +616,10 @@ impl App {
             let height = self
                 .card
                 .as_ref()
-                .map(|card| paint::card_height(&self.theme, self.dpi, card, self.language))
+                .map(|card| {
+                    CARD_TABS_HEIGHT
+                        + paint::card_height(&self.theme, self.dpi, card, self.language)
+                })
                 .unwrap_or(258)
                 .max(258);
             if height == self.card_height {
@@ -545,7 +707,11 @@ impl App {
                 self.settings.name_for(index, self.language),
                 update.status
             ));
-            self.content(&update.body, update.card, update.suggestion);
+            let card = update
+                .card
+                .as_ref()
+                .map(|base| self.slots[index].typing.card(base, self.language));
+            self.content(&update.body, card, update.suggestion);
         } else {
             self.status(&i18n::fill(
                 self.text.status_saved_regions,
@@ -557,19 +723,99 @@ impl App {
             self.content(self.text.body_waiting, None, None);
         }
     }
+    fn battle_typing(&self) -> BattleTyping {
+        if self.manual_preview {
+            self.manual_typing
+        } else {
+            self.slots
+                .get(self.settings.selected)
+                .map_or_else(BattleTyping::default, |slot| slot.typing)
+        }
+    }
+    fn active_card_tab(&self) -> Option<CardTab> {
+        let id = self.card.as_ref()?.id;
+        Some(
+            self.battle_typing()
+                .active_tab(id, self.engine_settings.modern_dex),
+        )
+    }
+    unsafe fn update_card_tabs(&self) {
+        let id = self.card.as_ref().map(|card| card.id);
+        for tab in CardTab::ALL {
+            let button = GetDlgItem(self.hwnd, tab_id(tab) as i32);
+            EnableWindow(button, i32::from(id.is_some_and(|id| tab.available(id))));
+            ShowWindow(button, if id.is_some() { 5 } else { 0 });
+            InvalidateRect(button, null(), 0);
+        }
+        let options = GetDlgItem(self.hwnd, CARD_OPTIONS_ID as i32);
+        let visible = if let (Some(id), Some(tab)) = (id, self.active_card_tab()) {
+            set_text(options, tab_options_label(tab, self.language));
+            match tab {
+                CardTab::Legacy => false,
+                CardTab::Modern => modern::forms(id).next().is_some(),
+                CardTab::Tera => true,
+                CardTab::Dynamax => {
+                    self.battle_typing().can_gigantamax(id)
+                        || modern::forms(id).any(BattleTyping::dynamax_form)
+                }
+            }
+        } else {
+            false
+        };
+        ShowWindow(options, if visible { 5 } else { 0 });
+    }
+    fn set_battle_typing(&mut self, typing: BattleTyping) {
+        if self.manual_preview {
+            let Some(card) = self.card.as_ref() else {
+                return;
+            };
+            let Some(species) = modern::manual_species(card.id, self.engine_settings.modern_dex)
+            else {
+                return;
+            };
+            self.manual_typing = typing;
+            self.content(
+                "",
+                Some(typing.card(&hint_card(species, self.language), self.language)),
+                None,
+            );
+        } else if let Some(slot) = self.slots.get_mut(self.settings.selected) {
+            slot.typing = typing;
+            self.preview();
+            self.sync_overlays();
+        }
+    }
+    fn select_card_tab(&mut self, tab: CardTab) {
+        if self
+            .card
+            .as_ref()
+            .is_some_and(|card| tab.available(card.id))
+        {
+            self.set_battle_typing(BattleTyping {
+                tab: Some(tab),
+                ..self.battle_typing()
+            });
+        }
+    }
+    fn select_battle_typing(&mut self) {
+        if let (Some(card), Some(tab)) = (&self.card, self.active_card_tab()) {
+            if let Some(typing) =
+                choose_typing(self.hwnd, card.id, tab, self.language, self.battle_typing())
+            {
+                self.set_battle_typing(typing);
+            }
+        }
+    }
     fn refresh_history(&mut self) {
         unsafe {
             SendMessageW(self.history_list, 0x184, 0, 0); // LB_RESETCONTENT
-            let data = species_data();
             for entry in self.history.entries() {
                 let unknown = match self.language {
                     Language::Zh => "未知",
                     Language::En => "Unknown",
                     Language::Ja => "不明",
                 };
-                let name = data
-                    .iter()
-                    .find(|species| species.id == entry.id)
+                let name = modern::manual_species(entry.id, self.engine_settings.modern_dex)
                     .map(|species| species.name(self.language))
                     .unwrap_or(unknown);
                 let label = format!("{}  #{:03} {}", entry.clock, entry.id, name);
@@ -583,7 +829,10 @@ impl App {
             if !self.history.is_empty() {
                 SendMessageW(self.history_list, 0x186, usize::MAX, 0); // LB_SETCURSEL
             }
-            ShowWindow(self.history_list, if self.history.is_empty() { 0 } else { 5 });
+            ShowWindow(
+                self.history_list,
+                if self.history.is_empty() { 0 } else { 5 },
+            );
             InvalidateRect(self.hwnd, null(), 0);
         }
     }
@@ -596,12 +845,13 @@ impl App {
         let Some(entry) = self.history.get(index).cloned() else {
             return;
         };
-        let data = species_data();
-        let Some(species) = data.iter().find(|species| species.id == entry.id) else {
+        let Some(species) = modern::manual_species(entry.id, self.engine_settings.modern_dex)
+        else {
             return;
         };
         // Keep the stored card on screen instead of the next polling result.
         self.manual_preview = true;
+        self.manual_typing = BattleTyping::default();
         self.content("", Some(hint_card(species, self.language)), None);
         let id = format!("#{:03}", entry.id);
         self.status(&i18n::fill(
@@ -609,7 +859,14 @@ impl App {
             &[
                 ("id", &id),
                 ("name", species.name(self.language)),
-                ("region", &entry.region),
+                (
+                    "region",
+                    if entry.region.is_empty() {
+                        self.text.manual_query
+                    } else {
+                        &entry.region
+                    },
+                ),
             ],
         ));
     }
@@ -641,6 +898,13 @@ impl App {
             ] {
                 set_text(GetDlgItem(self.hwnd, id), label);
             }
+            for tab in CardTab::ALL {
+                set_text(
+                    GetDlgItem(self.hwnd, tab_id(tab) as i32),
+                    tab_label(tab, language),
+                );
+            }
+            self.update_card_tabs();
             SendMessageW(
                 self.edit,
                 0x1501,
@@ -648,7 +912,10 @@ impl App {
                 wide(self.text.edit_placeholder).as_ptr() as isize,
             );
             if let Some(candidate) = &self.suggestion {
-                if let Some(species) = species_data().iter().find(|p| p.id == candidate.id) {
+                if let Some(species) = modern::species(self.engine_settings.modern_dex)
+                    .iter()
+                    .find(|p| p.id == candidate.id)
+                {
                     set_text(
                         self.confirm,
                         &i18n::fill(
@@ -663,6 +930,7 @@ impl App {
         self.refresh_history();
         self.layout_card();
         if self.manual_preview {
+            self.set_battle_typing(self.manual_typing);
             self.status(self.text.status_language_applied);
         } else {
             self.preview();
@@ -720,6 +988,7 @@ impl App {
                 text: self.text,
                 language: self.language,
                 game_language: self.engine_settings.game_language,
+                modern_dex: self.engine_settings.modern_dex,
             };
             self.workers
                 .push(thread::spawn(move || watch(context, selections)));
@@ -766,7 +1035,11 @@ impl App {
                 if let Some(r) = region {
                     obstacles.push(overlay::bounds(r));
                 }
-                let card = slot.last.as_ref().and_then(|u| u.card.clone());
+                let card = slot
+                    .last
+                    .as_ref()
+                    .and_then(|u| u.card.as_ref())
+                    .map(|base| slot.typing.card(base, self.language));
                 if let (Some(card), Some(region)) = (card, region) {
                     if slot.tag.is_none() {
                         slot.tag = overlay::Window::new(
@@ -884,7 +1157,17 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
         return 0;
     }
     if msg == 0x2b {
-        paint::button(&*(l as *const paint::DrawItem), &(*p).theme, (*p).dpi);
+        let item = &*(l as *const paint::DrawItem);
+        if item.is_card_control() {
+            let active = (&*p)
+                .app
+                .try_borrow()
+                .ok()
+                .and_then(|app| app.active_card_tab());
+            paint::card_button(item, &(*p).theme, (*p).dpi, active);
+        } else {
+            paint::button(item, &(*p).theme, (*p).dpi);
+        }
         return 1;
     }
     if msg == 0x133 || msg == 0x134 {
@@ -935,6 +1218,13 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
             if notification != 0 {
                 return DefWindowProcW(hwnd, msg, w, l);
             }
+            if let Some(tab) = CardTab::ALL
+                .into_iter()
+                .find(|&tab| tab_id(tab) == id as isize)
+            {
+                app.select_card_tab(tab);
+                return 0;
+            }
             match id {
                 101 => {
                     if app.settings.selections.len() >= MAX_REGIONS {
@@ -955,10 +1245,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                             app.settings.selected = app.settings.selections.len() - 1;
                             app.rebuild_selector();
                             if let Err(e) = app.persist() {
-                                app.status(&i18n::fill(
-                                    t.error_add_save,
-                                    &[("error", &e)],
-                                ));
+                                app.status(&i18n::fill(t.error_add_save, &[("error", &e)]));
                             } else {
                                 app.preview();
                             }
@@ -985,7 +1272,15 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         Ok(Some(value)) => match engines::save_settings(value) {
                             Ok(()) => {
                                 let previous_language = app.language;
+                                let mode_changed =
+                                    app.engine_settings.modern_dex != value.modern_dex;
                                 app.engine_settings = value;
+                                if mode_changed {
+                                    app.manual_preview = false;
+                                    app.manual_typing = BattleTyping::default();
+                                    app.content(t.body_waiting, None, None);
+                                    app.refresh_history();
+                                }
                                 if value.ui_language != previous_language {
                                     app.apply_language(value.ui_language);
                                 }
@@ -994,10 +1289,9 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                                     app.status(t.status_ppocr_ja);
                                 }
                             }
-                            Err(e) => app.status(&i18n::fill(
-                                t.error_settings_save,
-                                &[("error", &e)],
-                            )),
+                            Err(e) => {
+                                app.status(&i18n::fill(t.error_settings_save, &[("error", &e)]))
+                            }
                         },
                         Ok(None) => app.status(t.status_settings_cancelled),
                         Err(e) => app.status(&e),
@@ -1008,6 +1302,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         }
                     }
                 }
+                _ if id as isize == CARD_OPTIONS_ID => app.select_battle_typing(),
                 102 => {
                     if !app.workers.is_empty() {
                         app.halt();
@@ -1065,13 +1360,7 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                         .collect();
                     let resume = !app.workers.is_empty();
                     app.halt();
-                    match selection_edit::edit(
-                        hwnd,
-                        selected,
-                        name,
-                        others,
-                        app.language,
-                    ) {
+                    match selection_edit::edit(hwnd, selected, name, others, app.language) {
                         Ok(Some(selection)) => {
                             app.settings.selections[index] = selection;
                             if let Err(e) = app.persist() {
@@ -1136,24 +1425,31 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 }
                 104 => {
                     app.manual_preview = true;
+                    app.manual_typing = BattleTyping::default();
                     app.clear_history_selection();
-                    let data = species_data();
-                    match lookup_query(
-                        &get_text(app.edit),
-                        app.engine_settings.game_language,
-                        &data,
-                    ) {
+                    match modern::manual_match(&get_text(app.edit)) {
                         MatchResult::Found(id) => {
-                            let language = app.language;
-                            app.content(
-                                "",
-                                Some(hint_card(
-                                    data.iter().find(|s| s.id == id).unwrap(),
-                                    language,
-                                )),
-                                None,
-                            );
-                            app.status(t.status_manual_result);
+                            let species =
+                                modern::manual_species(id, app.engine_settings.modern_dex)
+                                    .expect("matched manual species");
+                            let card = hint_card(species, app.language);
+                            app.content("", Some(card), None);
+                            let status = if species.modern && !app.engine_settings.modern_dex {
+                                match app.language {
+                                    Language::Zh => "该物种使用现代属性表",
+                                    Language::En => "Using modern type rules for this species",
+                                    Language::Ja => "この種族には現代のタイプ相性を使用",
+                                }
+                            } else {
+                                t.status_manual_result
+                            };
+                            app.status(status);
+                            if app.history.record_manual(id, &local_clock()) {
+                                app.refresh_history();
+                                if let Err(error) = save_history(&app.history, t) {
+                                    app.status(&error);
+                                }
+                            }
                         }
                         _ => {
                             app.content(t.body_manual_miss, None, None);
@@ -1181,6 +1477,15 @@ unsafe extern "system" fn main_proc(hwnd: Handle, msg: u32, w: usize, l: isize) 
                 let index = update.index;
                 let card_id = update.card.as_ref().map(|card| card.id);
                 if let Some(slot) = app.slots.get_mut(index) {
+                    if slot
+                        .last
+                        .as_ref()
+                        .and_then(|prior| prior.card.as_ref())
+                        .map(|prior| prior.id)
+                        != card_id
+                    {
+                        slot.typing = BattleTyping::default();
+                    }
                     slot.last = Some(update);
                     slot.updated = Instant::now();
                     refresh |= index == app.settings.selected;
@@ -1391,6 +1696,7 @@ pub fn run() -> Result<(), String> {
             last_hover: Instant::now(),
             occlusions: Arc::new(Mutex::new(Vec::new())),
             manual_preview: false,
+            manual_typing: BattleTyping::default(),
             rx: None,
             stop: Arc::new(AtomicBool::new(true)),
             workers: Vec::new(),
@@ -1453,7 +1759,12 @@ pub fn run() -> Result<(), String> {
             px(32),
         );
         SendMessageW(app.edit, 0x30, app.theme.body as usize, 1);
-        SendMessageW(app.edit, 0x1501, 0, wide(t.edit_placeholder).as_ptr() as isize);
+        SendMessageW(
+            app.edit,
+            0x1501,
+            0,
+            wide(t.edit_placeholder).as_ptr() as isize,
+        );
         control(
             hwnd,
             "BUTTON",
@@ -1536,6 +1847,32 @@ pub fn run() -> Result<(), String> {
             px(44),
             px(36),
         );
+        for (index, tab) in CardTab::ALL.into_iter().enumerate() {
+            let button = control(
+                hwnd,
+                "BUTTON",
+                tab_label(tab, language),
+                0,
+                tab_id(tab),
+                px(30 + 106 * index as i32),
+                px(144),
+                px(100),
+                px(29),
+            );
+            ShowWindow(button, 0);
+        }
+        let options = control(
+            hwnd,
+            "BUTTON",
+            "",
+            0,
+            CARD_OPTIONS_ID,
+            px(461),
+            px(144),
+            px(129),
+            px(29),
+        );
+        ShowWindow(options, 0);
         for id in [102, 101, 103, 107, 104, 106, 110, 109, 111] {
             tooltips.add(GetDlgItem(hwnd, id));
         }
@@ -1771,7 +2108,9 @@ fn save_history(history: &History, text: &Strings) -> Result<(), String> {
 }
 fn load_history() -> History {
     settings_directory()
-        .and_then(|directory| std::fs::read_to_string(directory.join("recognition-history.txt")).ok())
+        .and_then(|directory| {
+            std::fs::read_to_string(directory.join("recognition-history.txt")).ok()
+        })
         .map(|text| History::parse(&text))
         .unwrap_or_default()
 }
@@ -1936,6 +2275,7 @@ struct WorkerContext {
     text: &'static Strings,
     language: Language,
     game_language: Language,
+    modern_dex: bool,
 }
 fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
     let WorkerContext {
@@ -1949,6 +2289,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
         text,
         language,
         game_language,
+        modern_dex,
     } = context;
     let scratch = match Scratch::create() {
         Ok(s) => s,
@@ -1966,7 +2307,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
             return;
         }
     };
-    let data = species_data();
+    let data = modern::species(modern_dex);
     let mut trackers: Vec<Tracker> = selections.iter().map(|_| Tracker::default()).collect();
 
     while !stop.load(Ordering::Relaxed) {
@@ -2018,7 +2359,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                     .map_err(|_| text.error_confirmations.to_owned())?
                     .clone();
                 let mut reads = raw.lines().map(str::to_owned).collect::<Vec<_>>();
-                let mut decision = resolve_reads(&reads, game_language, &data, &aliases);
+                let mut decision = resolve_reads(&reads, game_language, data, &aliases);
                 if decision.result == MatchResult::Unknown && !stop.load(Ordering::Relaxed) {
                     std::fs::write(
                         &scratch.alternate,
@@ -2029,7 +2370,7 @@ fn watch(context: WorkerContext, selections: Vec<(usize, Selection)>) {
                         config.recognize(&scratch.alternate, None, &scratch.windows_script, &stop)
                     {
                         reads.extend(raw.lines().map(str::to_owned));
-                        decision = resolve_reads(&reads, game_language, &data, &aliases);
+                        decision = resolve_reads(&reads, game_language, data, &aliases);
                     }
                 }
                 Ok(decision)

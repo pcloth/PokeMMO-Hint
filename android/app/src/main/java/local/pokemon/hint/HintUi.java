@@ -1,5 +1,6 @@
 package local.pokemon.hint;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
@@ -8,9 +9,18 @@ import android.graphics.drawable.RippleDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Spinner;
+import android.widget.ScrollView;
+import java.util.ArrayList;
+import java.util.StringJoiner;
+import java.util.function.Consumer;
 
 final class HintUi {
     static final int PAGE = 0xfff3f6fb, INK = 0xff1e293b, MUTED = 0xff64748b, BORDER = 0xffe0e7f0;
@@ -60,7 +70,63 @@ final class HintUi {
         return button;
     }
 
-    static View card(Context c, Dex dex, Dex.Species entry, Dex.Language language, Runnable close) {
+    static View resultCard(Context c, Dex.Card result, Dex.Language language, Runnable close,
+                           Consumer<Dex.Typing> apply, Consumer<AlertDialog> showDialog) {
+        LinearLayout container = column(c);
+        LinearLayout tabs = new LinearLayout(c);
+        tabs.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), 0);
+        for (Dex.Tab tab : Dex.Tab.values()) {
+            boolean selected = tab == result.tab();
+            boolean enabled = result.supports(tab);
+            Button button = resultButton(c, tab.label, enabled, selected);
+            button.setOnClickListener(view -> {
+                if (!selected) apply.accept(result.typing().withTab(tab));
+            });
+            var layout = new LinearLayout.LayoutParams(0, -1, 1);
+            if (tab != Dex.Tab.LEGACY) layout.leftMargin = dp(c, 4);
+            tabs.addView(button, layout);
+        }
+        container.addView(tabs);
+
+        String option = switch (result.tab()) {
+            case LEGACY -> null;
+            case MODERN -> result.rules().forms(result.base()).isEmpty() ? null : "选择形态";
+            case TERA -> "选择太晶属性";
+            case DYNAMAX -> result.rules().canGigantamax(result.base(), result.typing().form())
+                    || result.rules().forms(result.base()).stream().anyMatch(form -> result.rules().dynamaxForm(result.base(), form))
+                    ? "选择极巨形态" : null;
+        };
+        if (option != null) {
+            Button button = resultButton(c, option, true, false);
+            button.setPadding(dp(c, 10), 0, dp(c, 10), 0);
+            button.setOnClickListener(view -> showDialog.accept(typingDialog(c, result, language, apply)));
+            var layout = new LinearLayout.LayoutParams(-2, -2);
+            layout.setMargins(dp(c, 10), dp(c, 6), dp(c, 10), 0);
+            container.addView(button, layout);
+        }
+        container.addView(card(c, result, language, close));
+        return container;
+    }
+
+    private static Button resultButton(Context c, String label, boolean enabled, boolean selected) {
+        Button button = new Button(c, null, 0);
+        button.setAllCaps(false);
+        button.setText(label);
+        button.setTextSize(13);
+        button.setTextColor(enabled ? INK : MUTED);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(dp(c, 2), 0, dp(c, 2), 0);
+        button.setMinimumHeight(dp(c, 44));
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x25175bc4),
+                panel(c, selected ? 0xffe8f1ff : enabled ? WHITE : PAGE, 8), null));
+        button.setSelected(selected);
+        button.setEnabled(enabled);
+        return button;
+    }
+
+    private static View card(Context c, Dex.Card result, Dex.Language language, Runnable close) {
+        Dex.Species entry = result.entry();
         LinearLayout card = column(c);
         card.setPadding(dp(c, 16), dp(c, 12), dp(c, 16), dp(c, 14));
         LinearLayout header = new LinearLayout(c);
@@ -75,13 +141,27 @@ final class HintUi {
         Chips types = new Chips(c);
         for (int type : entry.types()) types.addView(chip(c, Dex.typeName(type), 0xffedf2fa, 0xff295995));
         card.addView(types, new LinearLayout.LayoutParams(-1, -2));
+        String note = switch (result.tab()) {
+            case TERA -> switch (result.rules().activeTera(result.base(), result.typing())) {
+                case -1 -> "请选择太晶属性，当前显示太晶化前的相克。";
+                case Dex.Typing.STELLAR -> "星晶保留太晶化前的防守属性。";
+                default -> "";
+            };
+            case DYNAMAX -> "极巨化和超极巨化保留原形态的防守属性。";
+            default -> "";
+        };
+        if (!note.isEmpty()) {
+            TextView caption = text(c, note, 12, MUTED, false);
+            caption.setPadding(0, dp(c, 6), 0, 0);
+            card.addView(caption);
+        }
         View rule = new View(c);
         rule.setBackgroundColor(BORDER);
         LinearLayout.LayoutParams separator = new LinearLayout.LayoutParams(-1, dp(c, 1));
         separator.topMargin = dp(c, 12);
         card.addView(rule, separator);
 
-        String[] groups = dex.details(entry);
+        String[] groups = result.rules().details(entry);
         for (int i = 0; i < GROUPS.length; i++) {
             LinearLayout row = new LinearLayout(c);
             row.setPadding(0, dp(c, 10), 0, 0);
@@ -94,6 +174,86 @@ final class HintUi {
             card.addView(row, new LinearLayout.LayoutParams(-1, -2));
         }
         return card;
+    }
+
+    private static AlertDialog typingDialog(Context c, Dex.Card result, Dex.Language language,
+                                            Consumer<Dex.Typing> apply) {
+        LinearLayout body = column(c);
+        body.setPadding(dp(c, 22), dp(c, 8), dp(c, 22), dp(c, 8));
+        Dex dex = result.rules();
+        Dex.Species entry = result.base();
+        Dex.Typing current = result.typing();
+        Dex.Tab tab = result.tab();
+        Runnable commit;
+        String title;
+        if (tab == Dex.Tab.TERA) {
+            title = "选择太晶属性";
+            var ids = new ArrayList<Integer>();
+            var labels = new ArrayList<String>();
+            ids.add(-1);
+            labels.add("未太晶化");
+            int fixed = dex.fixedTera(entry, current.form());
+            for (int type = 0; type <= Dex.Typing.STELLAR; type++) {
+                if (fixed >= 0 && type != fixed) continue;
+                ids.add(type);
+                labels.add(type == Dex.Typing.STELLAR ? "星晶" : Dex.typeName(type));
+            }
+            Spinner choices = choices(c, labels.toArray(new String[0]),
+                    ids.indexOf(dex.activeTera(entry, current)));
+            body.addView(choices);
+            commit = () -> apply.accept(new Dex.Typing(tab, current.form(),
+                    ids.get(choices.getSelectedItemPosition()), current.gigantamax()));
+        } else {
+            boolean dynamax = tab == Dex.Tab.DYNAMAX;
+            title = dynamax ? "选择极巨形态" : "选择形态";
+            var ids = new ArrayList<Integer>();
+            var labels = new ArrayList<String>();
+            ids.add(-1);
+            labels.add("默认形态");
+            var forms = dex.forms(entry);
+            for (int i = 0; i < forms.size(); i++) {
+                Dex.Form form = forms.get(i);
+                if (dynamax && !dex.dynamaxForm(entry, form)) continue;
+                var types = new StringJoiner(" / ");
+                for (int type : form.types()) types.add(Dex.typeName(type));
+                ids.add(i);
+                labels.add(form.name(language) + " · " + types);
+            }
+            Spinner choices = choices(c, labels.toArray(new String[0]), ids.indexOf(current.form()));
+            if (ids.size() > 1) body.addView(choices);
+            CheckBox gigantamax = new CheckBox(c);
+            if (dynamax && ids.stream().anyMatch(index -> dex.canGigantamax(entry, index))) {
+                gigantamax.setText("超极巨化");
+                gigantamax.setChecked(current.gigantamax());
+                body.addView(gigantamax);
+                choices.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                    @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long itemId) {
+                        gigantamax.setEnabled(dex.canGigantamax(entry, ids.get(position)));
+                    }
+                    @Override public void onNothingSelected(AdapterView<?> parent) {}
+                });
+            }
+            commit = () -> {
+                int form = ids.get(Math.max(0, choices.getSelectedItemPosition()));
+                boolean gmax = dynamax ? gigantamax.isChecked() && dex.canGigantamax(entry, form) : current.gigantamax();
+                apply.accept(new Dex.Typing(tab, form, current.tera(), gmax));
+            };
+        }
+        ScrollView scroll = new ScrollView(c);
+        scroll.addView(body);
+        return new AlertDialog.Builder(c).setTitle(title).setView(scroll)
+                .setNegativeButton("取消", null).setPositiveButton("应用", (dialog, button) -> commit.run())
+                .create();
+    }
+
+    private static Spinner choices(Context c, String[] labels, int selected) {
+        Spinner spinner = new Spinner(c);
+        var adapter = new ArrayAdapter<>(c, android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setSelection(Math.max(0, selected));
+        spinner.setMinimumHeight(dp(c, 44));
+        return spinner;
     }
 
     private static TextView chip(Context c, String value, int fill, int ink) {

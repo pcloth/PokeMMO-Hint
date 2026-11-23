@@ -1,0 +1,110 @@
+# National dex ID, form key, current types (0-based), zh/en/ja form labels. Source: PokeAPI pokemon.csv and pokemon_forms*.csv
+413	wormadam-sandy	6,4	砂土蓑衣	Sandy Cloak	すなちのミノ
+413	wormadam-trash	6,8	垃圾蓑衣	Trash Cloak	ゴミのミノ
+492	shaymin-sky	11,2	天空形态	Sky Forme	スカイフォルム
+479	rotom-heat	12,9	加热洛托姆	Heat Rotom	ヒートロトム
+479	rotom-wash	12,10	清洗洛托姆	Wash Rotom	ウォッシュロトム
+479	rotom-frost	12,14	结冰洛托姆	Frost Rotom	フロストロトム
+479	rotom-fan	12,2	旋转洛托姆	Fan Rotom	スピンロトム
+479	rotom-mow	12,11	切割洛托姆	Mow Rotom	カットロトム
+351	castform-sunny	9	太阳的样子	Sunny Form	たいようのすがた
+351	castform-rainy	10	雨水的样子	Rainy Form	あまみずのすがた
+351	castform-snowy	14	雪云的样子	Snowy Form	ゆきぐものすがた
+555	darmanitan-zen	9,13	达摩模式	Zen Mode	ダルマモード
+648	meloetta-pirouette	0,1	舞步形态	Pirouette Forme	ステップフォルム
+6	charizard-mega-x	9,15	超级喷火龙Ｘ	Mega Charizard X	メガリザードンＸ
+127	pinsir-mega	6,2	超级凯罗斯	Mega Pinsir	メガカイロス
+130	gyarados-mega	10,16	超级暴鲤龙	Mega Gyarados	メガギャラドス
+150	mewtwo-mega-x	13,1	超级超梦Ｘ	Mega Mewtwo X	メガミュウツーＸ
+181	ampharos-mega	12,15	超级电龙	Mega Ampharos	メガデンリュウ
+306	aggron-mega	8	超级波士可多拉	Mega Aggron	メガボスゴドラ
+254	sceptile-mega	11,15	超级蜥蜴王	Mega Sceptile	メガジュカイン
+334	altaria-mega	15,17	超级七夕青鸟	Mega Altaria	メガチルタリス
+531	audino-mega	0,17	超级差不多娃娃	Mega Audino	メガタブンネ
+383	groudon-primal	4,9	原始回归的样子	Primal Reversion	ゲンシカイキのすがた
+720	hoopa-unbound	13,16	解放胡帕	Hoopa Unbound	ときはなたれしフーパ
+428	lopunny-mega	0,1	超级长耳兔	Mega Lopunny	メガミミロップ
+19	rattata-alola	16,0	阿罗拉的样子	Alolan Form	アローラのすがた
+20	raticate-alola	16,0	阿罗拉的样子	Alolan Form	アローラのすがた
+20	raticate-totem-alola	16,0	totem alola	totem alola	totem alola
+26	raichu-alola	12,13	阿罗拉的样子	Alolan Form	アローラのすがた
+27	sandshrew-alola	14,8	阿罗拉的样子	Alolan Form	アローラのすがた
+28	sandslash-alola	14,8	阿罗拉的样子	Alolan Form	アローラのすがた
+37	vulpix-alola	14	阿罗拉的样子	Alolan Form	アローラのすがた
+38	ninetales-alola	14,17	阿罗拉的样子	Alolan Form	アローラのすがた
+50	diglett-alola	4,8	阿罗拉的样子	Alolan Form	アローラのすがた
+51	dugtrio-alola	4,8	阿罗拉的样子	Alolan Form	アローラのすがた
+52	meowth-alola	16	阿罗拉的样子	Alolan Form	アローラのすがた
+53	persian-alola	16	阿罗拉的样子	Alolan Form	アローラのすがた
+74	geodude-alola	5,12	阿罗拉的样子	Alolan Form	アローラのすがた
+75	graveler-alola	5,12	阿罗拉的样子	Alolan Form	アローラのすがた
+76	golem-alola	5,12	阿罗拉的样子	Alolan Form	アローラのすがた
+88	grimer-alola	3,16	阿罗拉的样子	Alolan Form	アローラのすがた
+89	muk-alola	3,16	阿罗拉的样子	Alolan Form	アローラのすがた
+103	exeggutor-alola	11,15	阿罗拉的样子	Alolan Form	アローラのすがた
+105	marowak-alola	9,7	阿罗拉的样子	Alolan Form	アローラのすがた
+741	oricorio-pom-pom	12,2	啪滋啪滋风格	Pom-Pom Style	ぱちぱちスタイル
+741	oricorio-pau	13,2	呼拉呼拉风格	Pa’u Style	ふらふらスタイル
+741	oricorio-sensu	7,2	轻盈轻盈风格	Sensu Style	まいまいスタイル
+105	marowak-totem	9,7	totem	totem	totem
+800	necrozma-dusk	13,8	黄昏之鬃	Dusk Mane	たそがれのたてがみ
+800	necrozma-dawn	13,7	拂晓之翼	Dawn Wings	あかつきのつばさ
+800	necrozma-ultra	13,15	究极奈克洛兹玛	Ultra Necrozma	ウルトラネクロズマ
+52	meowth-galar	8	伽勒尔的样子	Galarian Form	ガラルのすがた
+77	ponyta-galar	13	伽勒尔的样子	Galarian Form	ガラルのすがた
+78	rapidash-galar	13,17	伽勒尔的样子	Galarian Form	ガラルのすがた
+79	slowpoke-galar	13	伽勒尔的样子	Galarian Form	ガラルのすがた
+80	slowbro-galar	3,13	伽勒尔的样子	Galarian Form	ガラルのすがた
+83	farfetchd-galar	1	伽勒尔的样子	Galarian Form	ガラルのすがた
+110	weezing-galar	3,17	伽勒尔的样子	Galarian Form	ガラルのすがた
+122	mr-mime-galar	14,13	伽勒尔的样子	Galarian Form	ガラルのすがた
+144	articuno-galar	13,2	伽勒尔的样子	Galarian Form	ガラルのすがた
+145	zapdos-galar	1,2	伽勒尔的样子	Galarian Form	ガラルのすがた
+146	moltres-galar	16,2	伽勒尔的样子	Galarian Form	ガラルのすがた
+199	slowking-galar	3,13	伽勒尔的样子	Galarian Form	ガラルのすがた
+222	corsola-galar	7	伽勒尔的样子	Galarian Form	ガラルのすがた
+263	zigzagoon-galar	16,0	伽勒尔的样子	Galarian Form	ガラルのすがた
+264	linoone-galar	16,0	伽勒尔的样子	Galarian Form	ガラルのすがた
+554	darumaka-galar	14	伽勒尔的样子	Galarian Form	ガラルのすがた
+555	darmanitan-galar-standard	14	伽勒尔的样子	Galarian Form	ガラルのすがた
+555	darmanitan-galar-zen	14,9	达摩模式	Zen Mode	ダルマモード
+562	yamask-galar	4,7	伽勒尔的样子	Galarian Form	ガラルのすがた
+618	stunfisk-galar	4,8	伽勒尔的样子	Galarian Form	ガラルのすがた
+888	zacian-crowned	17,8	剑之王	Crowned Sword	けんのおう
+889	zamazenta-crowned	1,8	盾之王	Crowned Shield	たてのおう
+892	urshifu-rapid-strike	1,10	连击流	Rapid Strike Style	れんげきのかた
+898	calyrex-ice	13,14	骑白马的样子	Ice Rider	はくばじょうのすがた
+898	calyrex-shadow	13,7	骑黑马的样子	Shadow Rider	こくばじょうのすがた
+892	urshifu-rapid-strike-gmax	1,10	Gigantamax Form	Gigantamax Form	れんげきのかた・キョダイマックスのすがた
+58	growlithe-hisui	9,5	洗翠的样子	Hisuian Form	ヒスイのすがた
+59	arcanine-hisui	9,5	洗翠的样子	Hisuian Form	ヒスイのすがた
+100	voltorb-hisui	12,11	洗翠的样子	Hisuian Form	ヒスイのすがた
+101	electrode-hisui	12,11	洗翠的样子	Hisuian Form	ヒスイのすがた
+157	typhlosion-hisui	9,7	洗翠的样子	Hisuian Form	ヒスイのすがた
+211	qwilfish-hisui	16,3	洗翠的样子	Hisuian Form	ヒスイのすがた
+215	sneasel-hisui	1,3	洗翠的样子	Hisuian Form	ヒスイのすがた
+503	samurott-hisui	10,16	洗翠的样子	Hisuian Form	ヒスイのすがた
+549	lilligant-hisui	11,1	洗翠的样子	Hisuian Form	ヒスイのすがた
+570	zorua-hisui	0,7	洗翠的样子	Hisuian Form	ヒスイのすがた
+571	zoroark-hisui	0,7	洗翠的样子	Hisuian Form	ヒスイのすがた
+628	braviary-hisui	13,2	洗翠的样子	Hisuian Form	ヒスイのすがた
+705	sliggoo-hisui	8,15	洗翠的样子	Hisuian Form	ヒスイのすがた
+706	goodra-hisui	8,15	洗翠的样子	Hisuian Form	ヒスイのすがた
+713	avalugg-hisui	14,5	洗翠的样子	Hisuian Form	ヒスイのすがた
+724	decidueye-hisui	11,1	洗翠的样子	Hisuian Form	ヒスイのすがた
+128	tauros-paldea-combat-breed	1	帕底亚的样子（斗战种）	Paldean Form (Combat Breed)	パルデアのすがた
+128	tauros-paldea-blaze-breed	1,9	帕底亚的样子（火炽种）	Paldean Form (Blaze Breed)	パルデアのすがた
+128	tauros-paldea-aqua-breed	1,10	帕底亚的样子（水澜种）	Paldean Form (Aqua Breed)	パルデアのすがた
+194	wooper-paldea	3,4	帕底亚的样子	Paldean Form	パルデアのすがた
+1017	ogerpon-wellspring-mask	11,10	水井面具	Wellspring Mask	いどのめん
+1017	ogerpon-hearthflame-mask	11,9	火灶面具	Hearthflame Mask	かまどのめん
+1017	ogerpon-cornerstone-mask	11,5	础石面具	Cornerstone Mask	いしずえのめん
+36	clefable-mega	17,2	超级皮可西	Mega Clefable	メガピクシー
+154	meganium-mega	11,17	超级大竺葵	Mega Meganium	メガメガニウム
+160	feraligatr-mega	10,15	超级大力鳄	Mega Feraligatr	メガオーダイル
+689	barbaracle-mega	5,1	超级龟足巨铠	Mega Barbaracle	メガガメノデス
+358	chimecho-mega	13,8	超级风铃铃	Mega Chimecho	メガチリーン
+359	absol-mega-z	16,7	超级阿勃梭鲁Ｚ	Mega Absol Z	メガアブソルZ
+398	staraptor-mega	1,2	超级姆克鹰	Mega Staraptor	メガムクホーク
+445	garchomp-mega-z	15	超级烈咬陆鲨Ｚ	Mega Garchomp Z	メガガブリアスZ
+768	golisopod-mega	6,8	超级具甲武者	Mega Golisopod	メガグソクムシャ

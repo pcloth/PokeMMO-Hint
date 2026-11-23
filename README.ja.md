@@ -42,8 +42,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\release_window
 
 スクリプトは `windows-ocr/Cargo.toml` のバージョンを読み取り、テスト・コンパイル・パッケージ作成を `dist/` に対して行います：
 
-- `PokeMMO-Hint-v1.2.0-windows-x64.zip`
-- `PokeMMO-Hint-v1.2.0-windows-x64.zip.sha256`
+- `PokeMMO-Hint-v1.3.0-windows-x64.zip`
+- `PokeMMO-Hint-v1.3.0-windows-x64.zip.sha256`
 
 この 2 ファイルを GitHub/Gitee の Release にアップロードするか、そのまま配布します。ユーザーは ZIP を展開し、`pokemmo-hint.exe` をダブルクリックします。基本パッケージには Tesseract、モデル、ONNX Runtime は含まれません。インストール済みの Windows OCR 言語機能はそのまま使用でき、PP-OCR は設定から必要時にダウンロードします。ユーザーに Rust、コンパイラー、ROM は不要です。
 

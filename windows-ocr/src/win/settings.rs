@@ -119,9 +119,7 @@ fn prepare(
             });
             let result = OcrProcess::capture_timeout(cmd, stop, Duration::from_secs(600));
             done.store(true, Ordering::Relaxed);
-            result
-                .map(|_| ())
-                .map_err(|error| failed(&error))
+            result.map(|_| ()).map_err(|error| failed(&error))
         })?;
     }
     if stop.load(Ordering::Relaxed) {
@@ -169,10 +167,7 @@ fn progress_text(s: &str, text: &'static Strings) -> String {
             "CACHE loading saved files",
             text.settings_progress_cache_loading,
         )
-        .replace(
-            "CACHE model verified",
-            text.settings_progress_cache_model,
-        )
+        .replace("CACHE model verified", text.settings_progress_cache_model)
         .replace(
             "CACHE runtime verified",
             text.settings_progress_cache_runtime,
@@ -271,16 +266,16 @@ pub(super) unsafe extern "system" fn window_proc(
             let id = w & 0xffff;
             let notification = w >> 16;
             if id == 213 && notification == 1 {
-                if let Some(lang) = Language::ALL
-                    .get(SendMessageW(GetDlgItem(hwnd, 213), 0x147, 0, 0) as usize)
+                if let Some(lang) =
+                    Language::ALL.get(SendMessageW(GetDlgItem(hwnd, 213), 0x147, 0, 0) as usize)
                 {
                     state.value.ui_language = *lang;
                 }
                 return 0; // The dialog keeps its current text until Apply.
             }
             if id == 214 && notification == 1 {
-                if let Some(lang) = Language::ALL
-                    .get(SendMessageW(GetDlgItem(hwnd, 214), 0x147, 0, 0) as usize)
+                if let Some(lang) =
+                    Language::ALL.get(SendMessageW(GetDlgItem(hwnd, 214), 0x147, 0, 0) as usize)
                 {
                     state.value.game_language = *lang;
                 }
@@ -293,6 +288,10 @@ pub(super) unsafe extern "system" fn window_proc(
                     state.value.refresh_interval_ms = *ms;
                 }
                 return 0; // Changing refresh rate does not reload or download the engine.
+            }
+            if id == 216 && notification == 0 {
+                state.value.modern_dex = SendMessageW(GetDlgItem(hwnd, 216), 0x00f0, 0, 0) == 1;
+                return 0;
             }
             if id == 215 && notification == 0 {
                 state.value.show_all_weaknesses =
@@ -525,23 +524,38 @@ pub(super) unsafe fn edit(
         GetDlgItem(hwnd, 211),
         i32::from(value.engine == Engine::PaddleTiny),
     );
-    let checkbox = CreateWindowExW(
-        0,
-        wide("BUTTON").as_ptr(),
-        wide(text.settings_show_all_weaknesses).as_ptr(),
-        0x50000000 | 0x00000003 | 0x00010000, // WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP
-        paint::px(20, dpi),
-        paint::px(248, dpi),
-        paint::px(498, dpi),
-        paint::px(26, dpi),
-        hwnd,
-        215,
-        GetModuleHandleW(null()),
-        null(),
-    );
-    if checkbox != 0 {
-        SendMessageW(checkbox, 0x30, theme.body as usize, 1);
-        SendMessageW(checkbox, 0x00f1, usize::from(value.show_all_weaknesses), 0);
+    let modern_label = match language {
+        Language::Zh => "现代图鉴（18 属性）",
+        Language::En => "Modern Pokédex (18 types)",
+        Language::Ja => "現代図鑑（18タイプ）",
+    };
+    for (id, left, label, checked) in [
+        (
+            215,
+            20,
+            text.settings_show_all_weaknesses,
+            value.show_all_weaknesses,
+        ),
+        (216, 300, modern_label, value.modern_dex),
+    ] {
+        let checkbox = CreateWindowExW(
+            0,
+            wide("BUTTON").as_ptr(),
+            wide(label).as_ptr(),
+            0x50000000 | 0x00000003 | 0x00010000,
+            paint::px(left, dpi),
+            paint::px(248, dpi),
+            paint::px(if id == 215 { 280 } else { 218 }, dpi),
+            paint::px(26, dpi),
+            hwnd,
+            id,
+            GetModuleHandleW(null()),
+            null(),
+        );
+        if checkbox != 0 {
+            SendMessageW(checkbox, 0x30, theme.body as usize, 1);
+            SendMessageW(checkbox, 0x00f1, usize::from(checked), 0);
+        }
     }
     let context = Box::new(Context {
         state: RefCell::new(State {

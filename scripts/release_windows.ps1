@@ -132,7 +132,7 @@ try {
         package = 'portable'; engine_bundled = $false; model_bundled = $false
         default_engine = 'Windows.Media.Ocr'; optional_engine = 'PP-OCRv6 tiny ONNX'
         model_sha256 = '9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6'
-        static_crt = $true; species = '1-649 base forms'; configuration_included = $false
+        static_crt = $true; species = '1-649 legacy; 1-1025 modern'; configuration_included = $false
         coordinate_mode = 'screen'; target_process_required = $false; type_chart = 'generations 2-5'
         windows_subsystem = 'gui'; launch = 'pokemmo-hint.exe'
     }
